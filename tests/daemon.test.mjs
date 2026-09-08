@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { linkSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { connect as connectTcp } from 'node:net';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
@@ -249,6 +250,26 @@ test('graceful shutdown releases the store and configured local Origin is accept
   const next = await startDaemon(options);
   f.cleanups.push(() => next.close());
   assert.equal(next.storeEpoch, daemon.storeEpoch);
+});
+
+test('shutdown closes incomplete HTTP requests and releases the data owner lock', async (t) => {
+  const f = fixture(t);
+  const options = { projectRoot, dataDirectory: f.data, workspaceDirectory: f.workspace, token: f.token };
+  const daemon = await startDaemon(options);
+  f.cleanups.push(() => daemon.close());
+  const socket = connectTcp({ host: '127.0.0.1', port: Number(new URL(daemon.url).port) });
+  socket.on('error', () => {});
+  f.cleanups.push(() => socket.destroy());
+  await deadline(once(socket, 'connect'));
+  socket.write('GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n');
+  // Let the server receive the partial headers before initiating shutdown.
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const disconnected = new Promise((resolve) => socket.once('close', resolve));
+  await deadline(daemon.close(), 1_000);
+  await deadline(disconnected, 1_000);
+  const replacement = await startDaemon(options);
+  f.cleanups.push(() => replacement.close());
+  assert.equal(replacement.storeEpoch, daemon.storeEpoch);
 });
 
 test('unsupported schema and corrupt database fail startup without replacing the file', async (t) => {

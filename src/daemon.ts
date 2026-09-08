@@ -1,7 +1,7 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import type { AddressInfo, Socket } from 'node:net';
 import { WebSocket, WebSocketServer } from 'ws';
 import { AppError, helloSchema, MAX_MESSAGE_BYTES, MAX_TEXT_BYTES, PROTOCOL_MAJOR, publicError, requestSchema } from './protocol.js';
 import { prepareDataDirectory } from './paths.js';
@@ -46,6 +46,12 @@ export async function startDaemon(options: DaemonOptions) {
   server.headersTimeout = 5_000;
   server.requestTimeout = 5_000;
   server.maxConnections = 32;
+  const connections = new Set<Socket>();
+  let stopping = false;
+  server.on('connection', (socket) => {
+    connections.add(socket);
+    socket.once('close', () => connections.delete(socket));
+  });
   server.on('clientError', (_error, socket) => socket.destroy());
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES, perMessageDeflate: false });
 
@@ -124,6 +130,7 @@ export async function startDaemon(options: DaemonOptions) {
   });
 
   server.on('upgrade', (request, socket, head) => {
+    if (stopping) { socket.destroy(); return; }
     const address = server.address() as AddressInfo;
     const origin = request.headers.origin;
     if (request.url !== '/ws' || request.headers.host !== `127.0.0.1:${address.port}` || (origin !== undefined && !origins.includes(origin))) {
@@ -155,9 +162,15 @@ export async function startDaemon(options: DaemonOptions) {
     close(): Promise<void> {
       closing ??= (async () => {
         try {
+          stopping = true;
+          const serverClosed = new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
           for (const socket of wss.clients) socket.terminate();
-          await new Promise<void>((resolve, reject) => wss.close((error) => error ? reject(error) : resolve()));
-          await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+          // Include partial HTTP requests and rejected upgrades, which wss does not own.
+          for (const socket of connections) socket.destroy();
+          await Promise.all([
+            serverClosed,
+            new Promise<void>((resolve, reject) => wss.close((error) => error ? reject(error) : resolve())),
+          ]);
         } finally {
           store.close();
           token.fill(0);
