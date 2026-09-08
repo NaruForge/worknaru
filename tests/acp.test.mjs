@@ -2,12 +2,13 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { startDaemon } from '../dist/daemon.js';
+import { stopAgentJob } from '../dist/agent-process.js';
 import { connect, createSession, fixture, launch, mutation, projectRoot } from './helpers.mjs';
 
 function options(f) {
@@ -32,6 +33,58 @@ async function waitRun(client, runId, predicate = (run) => ['completed', 'failed
   assert.fail('Run did not reach expected state');
 }
 const log = (f) => existsSync(join(f.root, 'agent.log')) ? readFileSync(join(f.root, 'agent.log'), 'utf8').trim().split('\n').map(JSON.parse) : [];
+
+test('idle agent death updates availability and releases all four connection slots', async (t) => {
+  const f = fixture(t);
+  const daemon = await start(f);
+  const client = await connect(f, daemon);
+  for (let n = 0; n < 5; n++) {
+    const session = await createSession(client, daemon.workspace.workspaceId);
+    const started = await client.call('runs.start', { sessionId: session.sessionId, text: '유휴 종료' }, mutation(client));
+    assert.equal((await waitRun(client, started.result.run.runId)).state, 'completed');
+    const pid = log(f).filter((item) => item.type === 'spawn').at(-1).pid;
+    process.kill(pid, 'SIGKILL');
+    let unavailable = 0;
+    for (let attempt = 0; attempt < 200; attempt++) {
+      unavailable = (await client.call('sessions.get', { sessionId: session.sessionId })).result.aiUnavailable;
+      if (unavailable) break;
+      await delay(25);
+    }
+    assert.equal(unavailable, 1);
+    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+  }
+});
+
+test('dangling auth target links are rejected before creating a credential copy', async (t) => {
+  const f = fixture(t);
+  const source = join(f.root, 'fake-auth');
+  mkdirSync(source);
+  writeFileSync(join(source, 'auth.json'), '{"fake":"no-real-credentials"}');
+  mkdirSync(join(f.data, 'codex'));
+  const destination = join(f.workspace, 'unexpected-auth.json');
+  symlinkSync(destination, join(f.data, 'codex/auth.json'), 'file');
+  await assert.rejects(launch(f, { extraArgs: ['--acp'], env: { CODEX_HOME: source } }), /INVALID_DATA_PATH/);
+  assert.equal(existsSync(destination), false);
+});
+
+test('daemon death terminates the job even when forwarding to agent stdin is blocked', async (t) => {
+  const f = fixture(t);
+  const daemon = await launch(f, { entry: join(projectRoot, 'tests/acp-daemon.mjs'), env: { TEST_AGENT_ENTRY: join(projectRoot, 'tests/blocked-acp.mjs') } });
+  const client = await connect(f, daemon);
+  const session = await createSession(client, daemon.workspace.workspaceId);
+  const started = await client.call('runs.start', { sessionId: session.sessionId, text: 'x'.repeat(16000) }, mutation(client));
+  await waitRun(client, started.result.run.runId, (run) => run.delivery === 'attempting');
+  const db = new DatabaseSync(join(f.data, 'records.sqlite'));
+  const jobName = db.prepare('SELECT agent_job AS name FROM sessions WHERE id = ?').get(session.sessionId).name;
+  db.close();
+  f.cleanups.push(() => stopAgentJob(jobName, process.env));
+  const pid = log(f).find((item) => item.type === 'spawn').pid;
+  await delay(500);
+  await daemon.stop();
+  await delay(1500);
+  // Assert before explicit cleanup or restart could mask an orphaned process.
+  assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+});
 
 test('ACP streams committed output, preserves conversation context, and dispatches duplicate requests once', async (t) => {
   const f = fixture(t);

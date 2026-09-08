@@ -47,6 +47,7 @@ public static class WorkNaruJob {
     [DllImport("kernel32.dll", SetLastError=true)] static extern uint ResumeThread(IntPtr thread);
     [DllImport("kernel32.dll")] static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
     [DllImport("kernel32.dll")] static extern bool TerminateProcess(IntPtr handle, uint code);
+    [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
 
     // CommandLineToArgvW / CRT quoting, including trailing backslashes and quotes.
     static string Quote(string value) {
@@ -142,7 +143,7 @@ public static class WorkNaruJob {
             return false;
         } finally { Marshal.FreeHGlobal(info); CloseHandle(job); }
     }
-    public static void Run(string name, string executable, string[] arguments, string cwd) {
+    public static void Run(string name, string executable, string[] arguments, string cwd, uint ownerPid) {
         Validate(name);
         IntPtr job = CreateJobObject(IntPtr.Zero, name);
         if (job == IntPtr.Zero) throw new IOException("Cannot create job");
@@ -151,10 +152,25 @@ public static class WorkNaruJob {
         limit.Basic.Flags = 0x2000; // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
         int size = Marshal.SizeOf<ExtendedLimit>();
         IntPtr info = Marshal.AllocHGlobal(size);
+        IntPtr owner = IntPtr.Zero;
         try {
+            // Capture a process handle BEFORE acknowledging startup. The daemon
+            // must still answer through its private pipe, so a reused PID cannot
+            // authorize launch. Never terminate the process identified by this PID.
+            owner = OpenProcess(0x00100000, false, ownerPid); // SYNCHRONIZE only
+            Check(owner != IntPtr.Zero);
             Marshal.StructureToPtr(limit, info, false);
             Check(SetInformationJobObject(job, 9, info, (uint)size));
             Check(AssignProcessToJobObject(job, Process.GetCurrentProcess().Handle));
+            // Independent of forwarding: a blocked agent stdin must not prevent
+            // detection of daemon death. This handle continues to identify the
+            // original process after its PID is reused.
+            var ownerWatcher = new Thread(() => {
+                WaitForSingleObject(owner, uint.MaxValue);
+                TerminateJobObject(job, 1);
+            });
+            ownerWatcher.IsBackground = true;
+            ownerWatcher.Start();
             // The daemon must acknowledge this marker. If it died before the
             // job existed, EOF prevents a late agent launch after recovery.
             Console.Error.WriteLine("WORKNARU_JOB_READY");
@@ -164,7 +180,10 @@ public static class WorkNaruJob {
             Agent(job, input, executable, arguments, cwd);
         } finally {
             Marshal.FreeHGlobal(info);
+            // Closing the job terminates this supervisor, including ownerWatcher.
+            // Its process handle is released by the OS at the same time.
             CloseHandle(job); // kills the supervisor itself and all remaining descendants
+            if (owner != IntPtr.Zero) CloseHandle(owner); // setup failed before joining job
         }
     }
 }
@@ -175,7 +194,7 @@ try {
     }
     $agentConfig = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:WORKNARU_AGENT_CONFIG)) | ConvertFrom-Json
     Remove-Item Env:WORKNARU_AGENT_CONFIG
-    [WorkNaruJob]::Run($JobName, $agentConfig.executable, [string[]]$agentConfig.arguments, $agentConfig.cwd)
+    [WorkNaruJob]::Run($JobName, $agentConfig.executable, [string[]]$agentConfig.arguments, $agentConfig.cwd, [uint32]$agentConfig.ownerPid)
 } catch {
     [Console]::Error.WriteLine('WORKNARU_JOB_FAILED')
     exit 1

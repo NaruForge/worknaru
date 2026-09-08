@@ -7,7 +7,7 @@ const { values } = parseArgs({ options: { 'data-dir': { type: 'string' }, worksp
 const root = fileURLToPath(new URL('../', import.meta.url));
 const testRoot = dirname(values['data-dir']);
 const daemon = await startDaemon({ projectRoot: root, dataDirectory: values['data-dir'], workspaceDirectory: values.workspace, token: process.env.WORKNARU_TOKEN,
-  acp: { command: { executable: process.execPath, arguments: [join(root, 'tests/fake-acp.mjs')], cwd: values.workspace,
+  acp: { command: { executable: process.execPath, arguments: [process.env.TEST_AGENT_ENTRY ?? join(root, 'tests/fake-acp.mjs')], cwd: values.workspace,
     env: { ...process.env, TEST_AGENT_LOG: join(testRoot, 'agent.log'), TEMP: testRoot, TMP: testRoot },
   } },
 });

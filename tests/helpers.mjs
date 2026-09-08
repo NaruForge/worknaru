@@ -41,8 +41,8 @@ export async function deadline(promise, ms = 8_000) {
 
 export async function launch(f, overrides = {}) {
   const settings = { ...f, ...overrides };
-  const child = spawn(process.execPath, [settings.entry ?? join(projectRoot, 'dist/main.js'), '--data-dir', settings.data, '--workspace', settings.workspace, '--port', '0'], {
-    cwd: projectRoot, env: { ...process.env, WORKNARU_TOKEN: settings.token },
+  const child = spawn(process.execPath, [settings.entry ?? join(projectRoot, 'dist/main.js'), '--data-dir', settings.data, '--workspace', settings.workspace, '--port', '0', ...(settings.extraArgs ?? [])], {
+    cwd: projectRoot, env: { ...process.env, ...settings.env, WORKNARU_TOKEN: settings.token },
     stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
   });
   let output = '';

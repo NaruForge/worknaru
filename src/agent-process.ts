@@ -33,7 +33,7 @@ export async function launchAgentJob(jobName: string, command: AgentCommand, sig
   if (process.platform !== 'win32') throw new AppError('UNSUPPORTED_PLATFORM', '첫 ACP 실행은 Windows에서 제공합니다.');
   const child = spawn('pwsh.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-File', script, '-Mode', 'run', '-JobName', jobName], {
     cwd: command.cwd, env: { ...command.env, WORKNARU_AGENT_CONFIG: Buffer.from(JSON.stringify({
-      executable: command.executable, arguments: command.arguments, cwd: command.cwd,
+      executable: command.executable, arguments: command.arguments, cwd: command.cwd, ownerPid: process.pid,
     })).toString('base64') },
     windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], signal,
   });

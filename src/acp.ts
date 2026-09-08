@@ -22,9 +22,11 @@ function codexCommand(projectRoot: string, directory: string, cwd: string, codex
   const temp = prepareDataDirectory(projectRoot, join(directory, 'tmp'));
   const authSource = join(process.env.CODEX_HOME ?? join(homedir(), '.codex'), 'auth.json');
   const authTarget = join(home, 'auth.json');
-  if (existsSync(authTarget)) {
+  try {
     const stat = lstatSync(authTarget);
     if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink > 1) throw new AppError('INVALID_DATA_PATH', '에이전트 인증 파일 경로가 올바르지 않습니다.');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
   if (existsSync(authSource)) copyFileSync(authSource, authTarget);
   const env: NodeJS.ProcessEnv = {};
@@ -124,7 +126,12 @@ export class AcpRuntime {
           this.changed(run);
         } catch (error) { void this.fail(agent.activeRun, publicError(error).code); }
       }).connect(ndJsonStream(Writable.toWeb(process.child.stdin), Readable.toWeb(bounded) as unknown as ReadableStream<Uint8Array>));
-    void process.exited.then(() => connection.close());
+    void process.exited.then(() => {
+      connection.close();
+      if (this.agents.get(sessionId)?.process !== process) return;
+      this.agents.delete(sessionId);
+      try { this.store.disconnectAgent(sessionId); } catch { /* Storage failure already blocks new writes. */ }
+    });
     try {
       const initialized = await withTimeout(connection.agent.request('initialize', { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {}, clientInfo: { name: 'worknaru', version: '0.0.0' } }), 30_000);
       if (initialized.protocolVersion !== PROTOCOL_VERSION) throw new AppError('ACP_VERSION_MISMATCH', '에이전트 ACP 버전을 사용할 수 없습니다.');
