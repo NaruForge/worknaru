@@ -34,7 +34,7 @@ export const requestSchema = z.discriminatedUnion('method', [
   z.strictObject({ ...base, method: z.literal('sessions.get'), params: z.strictObject({ sessionId: uuid }) }),
   z.strictObject({
     ...base, method: z.literal('sessions.list'),
-    params: z.strictObject({ workspaceId: uuid, after: sequence.default(0), limit: z.number().int().min(1).max(50).default(20) }),
+    params: z.strictObject({ workspaceId: uuid, after: sequence.default(0), limit: z.number().int().min(1).max(50).default(20), order: z.enum(['asc', 'desc']).default('asc') }),
   }),
   z.strictObject({
     ...mutation, method: z.literal('messages.append'),

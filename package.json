@@ -7,22 +7,34 @@
     "node": ">=24.18.0 <25"
   },
   "scripts": {
-    "build": "tsc",
-    "typecheck": "tsc --noEmit",
+    "build": "tsc && npm run build:web",
+    "build:web": "tsc -p tsconfig.web.json && vite build",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.web.json",
+    "dev:web": "vite",
+    "preview:web": "vite preview",
     "start": "node dist/main.js",
     "test": "npm run build && node --test tests/*.test.mjs",
     "chat": "node dist/chat-client.js",
-    "test:live": "npm run build && node --test tests/live-acp.mjs"
+    "test:live": "npm run build && node --test tests/live-acp.mjs",
+    "test:web": "npm run build && playwright test",
+    "test:web:live": "npm run build && node --test tests/web-live.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/codex-acp": "1.10.0",
     "@agentclientprotocol/sdk": "1.4.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
     "ws": "8.21.3",
     "zod": "4.5.4"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@types/node": "24.13.3",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
     "@types/ws": "8.18.1",
-    "typescript": "7.0.2"
+    "@vitejs/plugin-react": "6.1.1",
+    "typescript": "7.0.2",
+    "vite": "8.2.2"
   }
 }

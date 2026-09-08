@@ -11,10 +11,13 @@ const PRINCIPAL = 'local-owner';
 const MODULE = 'chat';
 
 type Workspace = { workspaceId: string; path: string };
-type Session = { sessionId: string; workspaceId: string; title: string; seq: number; createdAt: string };
+type Session = { sessionId: string; workspaceId: string; title: string; seq: number; createdAt: string; aiUnavailable: number; latestRunId: string | null; latestRunState: Run['state'] | null; storageAvailable: boolean };
 export type Run = { runId: string; sessionId: string; state: 'running' | 'cancelling' | 'completed' | 'cancelled' | 'failed'; delivery: 'not_attempted' | 'attempting'; revision: number; text: string; errorCode: string | null; stopReason: string | null; createdAt: string; storageAvailable: boolean };
 
 const RUN_SELECT = `SELECT r.id AS runId, r.session_id AS sessionId, r.state, r.delivery, r.revision, m.text, r.error_code AS errorCode, r.stop_reason AS stopReason, r.created_at AS createdAt FROM runs r JOIN messages m ON m.run_id = r.id AND m.role = 'assistant'`;
+const SESSION_SELECT = `SELECT s.id AS sessionId, s.workspace_id AS workspaceId, s.title, s.seq, s.created_at AS createdAt,
+  s.agent_unavailable AS aiUnavailable, r.id AS latestRunId, r.state AS latestRunState
+  FROM sessions s LEFT JOIN runs r ON r.id = (SELECT run_id FROM messages WHERE session_id = s.id AND role = 'assistant' ORDER BY seq DESC LIMIT 1)`;
 export const isFinal = (run: Run) => ['completed', 'cancelled', 'failed'].includes(run.state);
 
 type Message = { messageId: string; sessionId: string; seq: number; text: string; createdAt: string };
@@ -148,12 +151,10 @@ export class RecordStore {
   }
 
   private session(sessionId: string): Session {
-    const session = this.db.prepare(`
-      SELECT id AS sessionId, workspace_id AS workspaceId, title, seq, created_at AS createdAt, agent_unavailable AS aiUnavailable
-      FROM sessions WHERE id = ? AND workspace_id = ? AND principal = ? AND module = ?
-    `).get(sessionId, this.workspace.workspaceId, PRINCIPAL, MODULE) as Session | undefined;
+    const session = this.db.prepare(SESSION_SELECT + ' WHERE s.id = ? AND s.workspace_id = ? AND s.principal = ? AND s.module = ?')
+      .get(sessionId, this.workspace.workspaceId, PRINCIPAL, MODULE) as Session | undefined;
     if (!session) throw new AppError('NOT_FOUND', '접근 가능한 대상을 찾을 수 없습니다.');
-    return session;
+    return { ...session, storageAvailable: !this.failed };
   }
 
   private receipt(requestId: string) {
@@ -223,11 +224,10 @@ export class RecordStore {
         case 'sessions.get': return this.session(request.params.sessionId);
         case 'sessions.list': {
           this.checkWorkspace(request.params.workspaceId);
-          const { after, limit } = request.params;
-          const sessions = this.db.prepare(`SELECT id AS sessionId, workspace_id AS workspaceId, title, seq, created_at AS createdAt
-            FROM sessions WHERE workspace_id = ? AND principal = ? AND module = ? AND seq > ? ORDER BY seq LIMIT ?`)
-            .all(this.workspace.workspaceId, PRINCIPAL, MODULE, after, limit + 1) as Session[];
-          return { sessions: sessions.slice(0, limit), nextAfter: sessions.length > limit ? sessions[limit - 1]!.seq : null };
+          const { after, limit, order } = request.params;
+          const sessions = this.db.prepare(SESSION_SELECT + ` WHERE s.workspace_id = ? AND s.principal = ? AND s.module = ? AND ${order === 'desc' ? (after === 0 ? 's.seq > ?' : 's.seq < ?') : 's.seq > ?'} ORDER BY s.seq ${order === 'desc' ? 'DESC' : 'ASC'} LIMIT ?`)
+            .all(this.workspace.workspaceId, PRINCIPAL, MODULE, after, limit + 1) as Omit<Session, 'storageAvailable'>[];
+          return { sessions: sessions.slice(0, limit).map((session) => ({ ...session, storageAvailable: !this.failed })), nextAfter: sessions.length > limit ? sessions[limit - 1]!.seq : null };
         }
         case 'messages.append': {
           this.session(request.params.sessionId);

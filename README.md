@@ -110,8 +110,10 @@ Module 등록, 화면 연결과 AI 기능 사용의 구체적인 흐름은 [Modu
 
 공통 화면과 첫 Chat은 [승인된 UI 기준](docs/design/workspace-chat-ui.md)을 따릅니다. 공통 서비스 탐색과 Module 내부 탐색을 분리하고, Module이 자신의 목록과 본문을 구성합니다.
 
+화면 기술은 [제품 방향에 따른 비교](docs/research/2026-09-09-web-ui-technology.md)를 근거로 React·TypeScript·Vite의 첫 구현을 검증합니다. 선택 제안과 결정 상태는 [ADR-0015](docs/adr/0015-use-react-typescript-and-vite-for-web-ui.md)에 기록합니다.
+
 ## 로컬 개발
 
-Daemon은 Session·텍스트 메시지의 SQLite 저장과 재시작 후 조회를 제공합니다. Windows에서는 `--acp` 옵션으로 Codex와 텍스트 대화를 실행하고, 응답 스트리밍·기록 저장·취소를 사용할 수 있습니다. 개발용 터미널 클라이언트를 제공하며 Chat 화면은 후속 범위입니다.
+Daemon은 Session·텍스트 메시지의 SQLite 저장과 재시작 후 조회를 제공합니다. Windows에서는 `--acp` 옵션으로 Codex와 텍스트 대화를 실행하고, 응답 스트리밍·기록 저장·취소를 사용할 수 있습니다. 첫 Chat Web UI와 개발용 터미널 클라이언트를 제공합니다. 화면의 로컬 실행은 `npm run dev:web`, 빌드한 화면의 확인은 `npm run preview:web`를 사용합니다.
 
 Node.js 24.18 이상 24.x에서 `npm ci --cache .npm-cache --ignore-scripts`와 `npm test`로 준비·검증할 수 있습니다. 인증 설정과 실행·조회 예시는 [로컬 Daemon 개발 안내](docs/development.md)를 참고하세요.
