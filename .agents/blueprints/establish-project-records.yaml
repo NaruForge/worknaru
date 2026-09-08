@@ -1,0 +1,6 @@
+format: improvement-ai-blueprint-installation/v1
+blueprint: establish-project-records
+repository: https://github.com/SWBaek/improvement-ai
+path: blueprints/establish-project-records/BLUEPRINT.md
+revision: 22da3be464bf629248d96f961487e90faf781f46
+source: https://github.com/SWBaek/improvement-ai/blob/22da3be464bf629248d96f961487e90faf781f46/blueprints/establish-project-records/BLUEPRINT.md

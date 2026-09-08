@@ -1,0 +1,52 @@
+name: Idea
+description: 구현 승인 전 제안을 기록합니다.
+labels: [idea, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: "진행 상태는 전용 Project에서 관리합니다. Issue 간 의존성은 생성 후 native dependency로 연결하세요. 미확인 정보는 미확인으로 적어주세요."
+  - type: textarea
+    id: context
+    attributes:
+      label: 배경 또는 문제
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: 원하는 결과
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: 범위
+    validations:
+      required: true
+  - type: textarea
+    id: non-goals
+    attributes:
+      label: 비목표
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 검증 가능한 완료 조건
+      description: 제안이 구현될 경우 결과를 어떻게 확인할지 적어주세요.
+    validations:
+      required: true
+  - type: textarea
+    id: risks
+    attributes:
+      label: 외부 선행조건과 위험
+      description: 없으면 없음으로 적고, Issue 간 선행관계 목록은 native dependency에서 관리하세요.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 관련 증거와 링크
+      description: 관련 조사, ADR, 구현 또는 자료를 링크하세요. 없으면 없음으로 적어주세요.
+    validations:
+      required: true
