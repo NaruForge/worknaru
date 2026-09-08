@@ -5,7 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { startDaemon } from '../dist/daemon.js';
 import { connect, createSession, fixture, mutation, projectRoot } from './helpers.mjs';
 
-test('real Codex ACP text roundtrip and follow-up survive local record restart', async (t) => {
+test('real Codex ACP follow-up resumes context across daemon restart', async (t) => {
   const f = fixture(t);
   const options = { projectRoot, dataDirectory: f.data, workspaceDirectory: f.workspace, token: f.token,
     acp: { codexPath: process.env.WORKNARU_CODEX_PATH },
@@ -17,6 +17,11 @@ test('real Codex ACP text roundtrip and follow-up survive local record restart',
   const ids = [];
   for (const text of ['Reply with exactly WORKNARU_OK. Do not use any tools or access any files.',
     'Repeat the exact token from your previous reply. Do not use any tools.']) {
+    if (ids.length) {
+      await daemon.close();
+      daemon = await startDaemon(options);
+      client = await connect(f, daemon);
+    }
     const response = await client.call('runs.start', { sessionId: session.sessionId, text }, mutation(client));
     assert.equal(response.ok, true);
     const runId = response.result.run.runId;

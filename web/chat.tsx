@@ -29,6 +29,7 @@ function notice(state: ChatState, session?: Session, run?: Run): { title: string
   if (state.pending) return { title: state.busy ? (state.pending.method === 'runs.cancel' ? '중지 접수 확인 중' : '접수 확인 중') : '접수 여부를 확인해야 합니다', text: '같은 요청의 접수 기록을 조회합니다. 새 요청으로 자동 재전송하지 않습니다.', action: state.busy ? undefined : 'check' };
   if (session?.storageAvailable === false || run?.storageAvailable === false) return { title: '저장 상태를 확인할 수 없습니다', text: '마지막 저장 확인 내용만 표시합니다. Daemon의 저장 문제를 해결한 뒤 기록 상태를 확인해 주세요.', action: 'check' };
   if (run?.errorCode === 'PROCESS_CLEANUP_UNKNOWN') return { title: '실행 종료를 확인할 수 없습니다', text: '이 대화의 새 실행을 막았습니다. Daemon에서 종료가 확인될 때까지 기다려 주세요.', action: 'check' };
+  if (run?.errorCode?.startsWith('SESSION_RESUME_')) return { title: '기존 대화를 이어갈 수 없습니다', text: 'AI가 이전 대화를 불러오지 못해 새 질문을 전달하지 않았습니다. 입력과 저장된 기록은 남아 있습니다. 새 대화에서 시작해 주세요.', action: 'new' };
   if (run?.errorCode === 'AGENT_CAPACITY') return { title: 'AI 연결 한도에 도달했습니다', text: '현재 최대 4개 대화를 AI에 연결할 수 있습니다. 목록에서 연결이 유지된 다른 대화를 선택해 주세요.' };
   if (run?.state === 'cancelling') return { title: '중지 중', text: '중지 요청을 접수했습니다. 실제 실행이 끝나는지 확인하고 있습니다.' };
   if (run?.state === 'cancelled') return { title: '응답을 중지했습니다', text: '저장된 부분은 남아 있습니다. 대화를 이어가려면 새 대화를 시작해 주세요.', action: 'new' };

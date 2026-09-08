@@ -2,6 +2,7 @@ import { test as base, expect } from '@playwright/test';
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { fixture, launch, projectRoot, connect, createSession, mutation } from './helpers.mjs';
+const origin = `http://127.0.0.1:${process.env.WORKNARU_TEST_WEB_PORT ?? 5173}`;
 
 const test = base.extend({
   records: async ({}, use) => {
@@ -10,12 +11,12 @@ const test = base.extend({
     try { await use(f); } finally { for (const action of cleanups.reverse()) await action(); }
   },
   daemon: async ({ records }, use) => {
-    const daemon = await launch(records, { entry: join(projectRoot, 'tests/acp-daemon.mjs'), extraArgs: ['--origin', 'http://127.0.0.1:5173'] });
+    const daemon = await launch(records, { entry: join(projectRoot, 'tests/acp-daemon.mjs'), extraArgs: ['--origin', origin] });
     await use(daemon);
   },
 });
 async function login(page, daemon, records) {
-  await page.goto('http://127.0.0.1:5173');
+  await page.goto(origin);
   await page.getByLabel('Daemon 주소').fill(daemon.url);
   await page.getByLabel('연결 키', { exact: true }).fill(records.token);
   await page.getByRole('dialog', { name: 'Workspace 연결' }).getByRole('button', { name: '연결', exact: true }).click();
@@ -120,7 +121,7 @@ test('lost start response survives reload and is queried once without repeating 
   expect(await page.evaluate(() => sessionStorage.length)).toBe(0);
 });
 
-test('page through persisted messages; forced daemon restart becomes read-only history', async ({ page, daemon, records }) => {
+test('page through persisted messages and continue a completed conversation after daemon restart', async ({ page, daemon, records }) => {
   const client = await connect(records, daemon);
   const original = await createSession(client, daemon.workspace.workspaceId, '긴 대화');
   for (let i = 0; i < 55; i++) await client.call('messages.append', { sessionId: original.sessionId, text: `저장 기록 ${i}` }, mutation(client));
@@ -132,11 +133,37 @@ test('page through persisted messages; forced daemon restart becomes read-only h
   await expect(page.locator('.run-state')).toHaveText('응답 완료');
   await daemon.stop();
   await expect(page.getByRole('button', { name: '연결 끊김', exact: true })).toBeVisible();
-  const restarted = await launch(records, { entry: join(projectRoot, 'tests/acp-daemon.mjs'), extraArgs: ['--origin', 'http://127.0.0.1:5173'] });
+  const restarted = await launch(records, { entry: join(projectRoot, 'tests/acp-daemon.mjs'), extraArgs: ['--origin', origin] });
   await login(page, restarted, records);
-  await expect(page.getByText('이 대화는 기록 보기로 열렸습니다')).toBeVisible();
-  await page.getByRole('textbox', { name: '메시지', exact: true }).fill('기존 맥락을 재개하지 않음');
+  await expect(page.getByText('이 대화는 기록 보기로 열렸습니다')).toHaveCount(0);
+  await send(page, 'recall-first');
+  await expect(page.locator('.run-state')).toHaveText('응답 완료');
+  await page.getByRole('button', { name: '다음 기록 불러오기' }).click();
+  await expect(page.getByRole('article', { name: 'AI 메시지' })).toHaveCount(2);
+  await expect(page.getByRole('article', { name: 'AI 메시지' }).last()).toContainText('답변 2: 재시작 뒤 기록');
+  const activity = readFileSync(join(records.root, 'agent.log'), 'utf8').trim().split('\n').map(JSON.parse);
+  expect(activity.filter((item) => item.type === 'new')).toHaveLength(1);
+  expect(activity.filter((item) => item.type === 'prompt')).toHaveLength(2);
+});
+
+test('resume failure explains undelivered input and preserves the previous transcript', async ({ page, daemon, records }) => {
+  await login(page, daemon, records);
+  await newSession(page);
+  await send(page, '보존할 이전 답변');
+  await expect(page.locator('.run-state')).toHaveText('응답 완료');
+  await daemon.stop();
+  const restarted = await launch(records, { entry: join(projectRoot, 'tests/acp-daemon.mjs'), extraArgs: ['--origin', origin], env: { TEST_AGENT_RESUME: 'fail' } });
+  await login(page, restarted, records);
+  await send(page, '전달되지 않을 새 입력');
+  await expect(page.locator('.run-state')).toHaveText('응답 실패', { timeout: 20_000 });
+  await expect(page.getByText('기존 대화를 이어갈 수 없습니다')).toBeVisible();
+  await expect(page.getByRole('article', { name: 'AI 메시지' }).first()).toContainText('답변 1: 보존할 이전 답변');
+  await expect(page.getByRole('article', { name: '내 메시지' }).last()).toContainText('전달되지 않을 새 입력');
+  await page.getByRole('textbox', { name: '메시지', exact: true }).fill('추가 전송 차단');
   await expect(page.getByRole('button', { name: '메시지 전송' })).toBeDisabled();
+  const activity = readFileSync(join(records.root, 'agent.log'), 'utf8').trim().split('\n').map(JSON.parse);
+  expect(activity.filter((item) => item.type === 'new')).toHaveLength(1);
+  expect(activity.filter((item) => item.type === 'prompt')).toHaveLength(1);
 });
 
 test('storage fault and unknown cleanup keep last confirmed text and prevent new execution', async ({ page, daemon, records }) => {

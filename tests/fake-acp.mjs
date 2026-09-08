@@ -1,7 +1,8 @@
 // A separate real process speaking ACP v1, including a descendant for cleanup tests.
 import { createInterface } from 'node:readline';
 import { randomUUID } from 'node:crypto';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { spawn } from 'node:child_process';
 
 const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...message }) + '\n');
@@ -10,14 +11,35 @@ log({ type: 'spawn', pid: process.pid });
 const sessions = new Map();
 const tasks = new Map();
 const reply = (id, result) => send({ id, result });
+const sessionFile = (sessionId) => join(dirname(process.env.TEST_AGENT_LOG), `session-${sessionId}.json`);
+const resumeMode = process.env.TEST_AGENT_RESUME ?? 'resume';
 createInterface({ input: process.stdin }).on('line', (line) => {
   const message = JSON.parse(line);
   const { id, method, params } = message;
-  if (method === 'initialize') reply(id, { protocolVersion: 1, agentCapabilities: {}, authMethods: [] });
+  if (method === 'initialize') reply(id, { protocolVersion: 1,
+    agentCapabilities: resumeMode === 'unsupported' ? {} : resumeMode === 'load' ? { loadSession: true } : { loadSession: true, sessionCapabilities: { resume: {} } }, authMethods: [] });
   if (method === 'session/new') {
     const sessionId = randomUUID();
     sessions.set(sessionId, []);
+    writeFileSync(sessionFile(sessionId), '[]');
+    log({ type: 'new', sessionId });
     reply(id, { sessionId });
+  }
+  if (method === 'session/resume' || method === 'session/load') {
+    log({ type: 'resume', method, sessionId: params.sessionId });
+    if (resumeMode === 'wait') return;
+    try {
+      if (resumeMode === 'fail') throw new Error('Synthetic resume failure');
+      const history = JSON.parse(readFileSync(sessionFile(params.sessionId), 'utf8'));
+      sessions.set(params.sessionId, history);
+      if (method === 'session/load') {
+        for (const [index, text] of history.entries()) {
+          for (const [sessionUpdate, content] of [['user_message_chunk', text], ['agent_message_chunk', `답변 ${index + 1}: ${text}`]])
+            send({ method: 'session/update', params: { sessionId: params.sessionId, update: { sessionUpdate, content: { type: 'text', text: content } } } });
+        }
+      }
+      reply(id, {});
+    } catch { send({ id, error: { code: -32602, message: 'Session history unavailable' } }); }
   }
   if (method === 'session/prompt') {
     const text = params.prompt[0].text;
@@ -43,13 +65,13 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       tasks.set(params.sessionId, { id });
       return;
     }
-    const chunks = text === 'large' ? ['보존된 출력', 'x'.repeat(17_000)] : [`답변 ${history.length}: `, text];
+    const chunks = text === 'large' ? ['보존된 출력', 'x'.repeat(17_000)] : [`답변 ${history.length}: `, text === 'recall-first' ? history[0] : text];
     let index = 0;
     const timer = setInterval(() => {
       if (index < chunks.length) send({ method: 'session/update', params: { sessionId: params.sessionId, update: {
         sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: chunks[index++] },
       } } });
-      else { clearInterval(timer); tasks.delete(params.sessionId); reply(id, { stopReason: 'end_turn' }); }
+      else { clearInterval(timer); tasks.delete(params.sessionId); writeFileSync(sessionFile(params.sessionId), JSON.stringify(history)); reply(id, { stopReason: 'end_turn' }); }
     }, 40);
     tasks.set(params.sessionId, { id, timer });
   }
