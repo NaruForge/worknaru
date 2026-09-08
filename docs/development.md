@@ -6,7 +6,7 @@
 
 ## 지원하는 범위
 
-Daemon은 Session과 텍스트 메시지를 SQLite에 저장하고, 재시작 뒤 기록과 최초 접수 결과를 조회한다. 한 실행에서 명시한 Workspace 하나에 접근할 수 있다. Windows에서 `--acp`로 실행하면 아래의 실제 Codex 대화와 실행별 구독을 추가로 제공한다. Chat 화면은 후속 범위다.
+Daemon은 Session과 텍스트 메시지를 SQLite에 저장하고, 재시작 뒤 기록과 최초 접수 결과를 조회한다. 한 실행에서 명시한 Workspace 하나에 접근할 수 있다. Windows에서 `--acp`로 실행하면 아래의 실제 Codex 대화와 실행별 구독을 추가로 제공한다. 첫 Chat Web UI는 별도 로컬 개발 서버에서 같은 Daemon에 연결한다.
 
 저장 연산은 `messages.append`다. `accepted: true`는 메시지와 접수 결과가 커밋됐다는 뜻이며 `aiExecution: false`를 함께 돌려준다. 저장한 메시지를 자동으로 AI에 보내지 않는다. 실제 AI 실행은 `--acp`가 활성화된 데몬의 `runs.start`로 요청한다.
 
@@ -72,8 +72,8 @@ npm start -- --data-dir .worknaru-dev --workspace .
 | --- | --- |
 | `workspaces.get` | 빈 params로 현재 허용된 Workspace를 조회한다. |
 | `sessions.create` | Workspace·제목과 요청 ID·epoch로 생성한다. |
-| `sessions.get` | Session ID로 정보를 조회한다. |
-| `sessions.list` | Workspace·선택적인 `after`·`limit`으로 목록을 조회한다. |
+| `sessions.get` | Session ID로 정보와 `aiUnavailable`, `latestRunId`, `latestRunState`, `storageAvailable`을 조회한다. 최신 실행의 상세 본문은 `runs.get/watch`로 확인한다. |
+| `sessions.list` | Workspace·선택적인 `after`·`limit`·`order`로 같은 요약 정보의 목록을 조회한다. 기본 `asc`는 기존 오름차순이고, `desc`는 최신 생성 순이다. `after: 0`에서 시작해 `nextAfter`를 같은 정렬의 다음 페이지에 사용한다. |
 | `messages.append` | Session·텍스트와 요청 ID·epoch로 저장한다. |
 | `messages.list` | Session·선택적인 `after`·`upTo`·`limit`으로 메시지를 조회한다. |
 | `requests.get` | params의 Workspace·요청 ID·`storeEpoch`로 최초 접수 결과를 조회한다. |
@@ -164,3 +164,50 @@ npm run test:live
 ```
 
 관련 공식 자료: [ACP 초기화](https://agentclientprotocol.com/protocol/v1/initialization), [질문과 취소](https://agentclientprotocol.com/protocol/v1/prompt-turn), [Codex ACP 어댑터](https://github.com/agentclientprotocol/codex-acp), [Codex 설정](https://learn.chatgpt.com/codex/config-reference).
+
+## 첫 Chat Web UI
+
+- 작업: [#10 첫 Chat Web UI와 화면 기술 선택 근거](https://github.com/NaruForge/worknaru/issues/10)
+- 화면 기준: [A안](design/workspace-chat-ui.md), 비교·선택 근거: [화면 기술 비교](research/2026-09-09-web-ui-technology.md)
+
+화면과 Daemon을 별도로 실행한다. 첫 터미널에서 다음 명령을 사용한다. 토큰은 Daemon과 화면 사이의 개발용 연결 키이며 Codex 로그인 토큰과 다르다.
+
+```powershell
+npm run build
+$env:WORKNARU_TOKEN = node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64url'))"
+$env:WORKNARU_TOKEN | Set-Clipboard
+npm start -- --data-dir .worknaru-dev --workspace . --port 4310 --origin http://127.0.0.1:5173 --acp --codex-path (Get-Command codex.exe).Source
+```
+
+두 번째 터미널에서 `npm run dev:web`를 실행하고 `http://127.0.0.1:5173`을 연다. 연결 창의 Daemon 주소는 `ws://127.0.0.1:4310/ws`이며, 연결 키에 복사한 값을 붙여 넣는다. 빌드 산출물을 확인할 때는 개발 서버를 종료한 뒤 `npm run preview:web`를 사용한다. 두 화면 서버는 같은 포트를 사용하며, 충돌 시 임의 포트로 이동하지 않는다.
+
+연결 후 **새 대화 → 메시지 전송 → 응답 확인 → 필요 시 중지**를 사용할 수 있다. 같은 데몬에서 정상 완료한 대화는 후속 질문을 받는다. 취소·AI 연결 실패·데몬 재시작 후에는 저장된 기록을 보고 새 대화를 시작한다. `--acp` 없이 실행한 Daemon에서는 기록만 조회한다. 페이지를 닫아도 독립 Daemon의 실행은 계속된다.
+
+### 상태와 입력 보존
+
+- 연결 키는 화면 메모리에서만 사용한다. URL·브라우저 저장소·빌드 환경 변수에 넣지 않는다. 새로고침 후에는 다시 입력한다. 현재 화면은 IPv4 loopback의 정확한 `/ws` 주소만 허용한다.
+- 일반 초안과 목록 접기·테마는 열린 화면의 메모리에서 유지한다. 다른 대화를 선택해도 초안이 남지만 새로고침·탭 종료 후 일반 초안을 복구하는 기능은 제공하지 않는다.
+- 변경 요청은 전송 전에 `requestId`, `storeEpoch`, Workspace, 연산과 필요한 미확정 입력을 같은 탭의 `sessionStorage`에 기록한다. 보관할 수 없으면 보내지 않는다. 접수 확인 후 제거하며 대화 전문을 별도 원본으로 저장하지 않는다.
+- 응답을 놓친 요청은 `requests.get`으로 조회한다. 저장소가 같고 접수 기록이 없다고 확인된 경우 입력을 복원하고 사용자의 직접 전송을 기다린다. epoch 불일치나 저장 장애는 접수 없음으로 바꾸지 않는다. 미확정 입력은 안내에서 펼쳐 볼 수 있다.
+- 위 접수 복구는 같은 화면 Origin·탭·Daemon 주소·Workspace 범위다. Daemon을 같은 포트로 재시작해야 같은 보관 키를 찾는다. 브라우저 저장 데이터 삭제·새 탭·브라우저 재실행까지 보존을 약속하지 않는다.
+- 최신 실행은 스냅샷 구독과 1초 간격 조회로 확인한다. 목록은 약 5초 간격으로 갱신하며, 화면 이동은 실행 취소로 취급하지 않는다. 다른 대화의 표시에는 최근 조회 시점의 상태가 반영된다.
+- 다른 클라이언트가 후속 질문을 시작해 최신 실행이 바뀌면, 화면에 남은 이전 실행의 미종료 스냅샷도 조회한다. 이전 답변을 오래된 부분 응답이나 실행 중 상태로 덮어쓰지 않는다.
+- 기록은 처음부터 50개씩 조회하고 ‘다음 기록 불러오기’로 이어 읽는다. 읽고 있는 페이지는 `upTo`를 유지한다. 중간 기록이 남아 있어도 최신 실행은 별도로 확인해 새 입력 가능 여부를 판단한다. 마지막 페이지에서는 새 기록을 이어 조회한다.
+- 한글 조합 중 Enter는 전송하지 않는다. 응답 중에도 초안을 작성할 수 있고 중지는 별도 버튼으로 요청한다. UTF-8 16KiB 초과 입력은 유지하면서 전송을 막는다. 출력은 일반 텍스트로 표시하며 HTML·Markdown을 실행하거나 렌더링하지 않는다.
+
+### 코드 경계와 검증
+
+`src/web-client.ts`는 React·Node 런타임에 의존하지 않는 플랫폼 접속 코드다. 응답을 Zod로 확인하고 호출 응답과 실행 알림을 구분한다. `src/chat-state.ts`는 Chat의 대화 탐색·초안·접수 복구를 소유한다. `web/workspace.tsx`는 공통 작업 화면, `web/chat.tsx`는 Chat 화면이다. 아직 없는 외부 Module 등록·설치 또는 별도 서비스의 실행 계층을 만들지 않는다.
+
+Daemon과 브라우저의 TypeScript 설정은 분리하되 루트 패키지 하나를 유지한다. `npm run build`는 Daemon과 정적 화면을 빌드한다. 브라우저 산출물은 `dist/web`이고, 개발 서버는 화면·접속 소스와 의존성 디렉터리만 파일 제공 대상으로 허용한다. 개발 데이터·인증 파일을 정적 화면에 포함하지 않는다. 이 실행 방식은 로컬 개발용이며 제품 배포·원격 공개·데스크톱 포장까지 구현한 것은 아니다.
+
+```powershell
+npm run typecheck
+npm test
+npm run test:web
+# 기존 Codex 로그인을 사용하는 실제 모델 요청 1회와 페이지 재조회
+$env:WORKNARU_CODEX_PATH = (Get-Command codex.exe).Source
+npm run test:web:live
+```
+
+브라우저 시험은 설치된 Microsoft Edge를 사용한다. 별도 ACP 시험 프로세스와 실제 Daemon으로 실행·취소·초안·IME·입력 한도·응답 유실 후 새로고침·기록 페이지·Daemon 재시작·모달 포커스·320/390/736px·테마를 확인한다. 저장 장애와 실행 종료 불명의 화면 표시는 WebSocket 응답 변형으로 검증하며 실제 SQLite 장애와 프로세스 정리는 기존 Daemon 시험이 맡는다. 실제 Codex 시험은 추가로 화면의 응답과 새로고침 후 동일 기록을 확인한다. 전체 데스크톱 컨테이너·스크린리더 조합·대용량 문서 편집 성능을 검증한 결과는 아니다.
