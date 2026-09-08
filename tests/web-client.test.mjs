@@ -104,3 +104,36 @@ test('missing receipt restores draft while mismatched store epoch remains unreso
   await model.createSession();
   assert.equal(model.getSnapshot().sessions.length, 1);
 });
+
+test('returning to a conversation reconciles historical runs advanced by another client', async (t) => {
+  const f = fixture(t);
+  const daemon = await launch(f, { entry: join(projectRoot, 'tests/acp-daemon.mjs') });
+  const observer = await connect(f, daemon);
+  const model = new ChatStateStore(new WebClient(), memory());
+  t.after(() => model.close());
+  await model.connect(daemon.url, f.token);
+  await model.createSession();
+  const sessionId = model.getSnapshot().selected;
+  model.setDraft('first answer must be complete');
+  await model.send();
+  const first = Object.values(model.getSnapshot().runs)[0];
+  await model.createSession();
+  const waitCompleted = async (runId) => {
+    for (let attempt = 0; attempt < 200; attempt++) {
+      const response = await observer.call('runs.get', { runId });
+      if (response.result.state === 'completed') return response.result;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error('Run did not complete');
+  };
+  const savedFirst = await waitCompleted(first.runId);
+  const second = await observer.call('runs.start', { sessionId, text: 'second client continuation' }, mutation(observer));
+  assert.equal(second.ok, true);
+  await waitCompleted(second.result.run.runId);
+  await model.select(sessionId);
+  const state = model.getSnapshot();
+  const message = state.pages[sessionId].messages.find((item) => item.runId === first.runId && item.role === 'assistant');
+  assert.equal(state.runs[first.runId].state, 'completed');
+  assert.equal(state.runs[first.runId].text, savedFirst.text);
+  assert.equal(state.runs[first.runId].text, message.text);
+});

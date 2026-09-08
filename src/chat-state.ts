@@ -126,6 +126,14 @@ export class ChatStateStore {
     this.update({ sessions: [...this.state.sessions.filter((item) => item.sessionId !== sessionId), session].sort((a, b) => b.seq - a.seq) });
     if (this.state.selected !== sessionId || version !== this.selection) return;
     const runId = session.latestRunId;
+    // Another client may have advanced this session while it was not watched.
+    // Reconcile unfinished historical snapshots before rendering them over stored messages.
+    for (const previous of Object.values(this.state.runs)) {
+      if (previous.sessionId !== sessionId || previous.runId === runId || (final(previous) && previous.storageAvailable)) continue;
+      const historical = await this.client.call('runs.get', { runId: previous.runId });
+      if (generation !== this.generation || version !== this.selection) return;
+      this.receiveRun(historical);
+    }
     if (this.watched && this.watched !== runId) {
       const previous = this.watched; this.watched = undefined;
       await this.client.call('runs.unwatch', { runId: previous });
