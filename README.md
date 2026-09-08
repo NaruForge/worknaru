@@ -106,4 +106,10 @@ Chat은 대화 목록, 메시지 입력·표시 등 사용자가 AI와 대화하
 
 Module 등록, 화면 연결과 AI 기능 사용의 구체적인 흐름은 [Module과 플랫폼의 연결 규칙](docs/design/module-platform-contract.md)에서 설명합니다. 후속 상세 설계가 필요한 부분도 함께 명시합니다.
 
-첫 구현의 저장소 구성과 큰 책임 경계는 [초기 저장소 구성 설계안](docs/design/repository-structure.md)에서 제안합니다. 세부 폴더·파일 배치는 구현하면서 정합니다.
+첫 구현의 저장소 구성과 큰 책임 경계는 [초기 저장소 구성 설계](docs/design/repository-structure.md)에서 설명합니다. 세부 폴더·파일 배치는 구현하면서 정합니다.
+
+## 로컬 개발
+
+첫 Daemon은 Session·텍스트 메시지의 SQLite 저장과 재시작 후 조회를 제공합니다. 실제 AI 연결과 Chat 화면은 아직 구현하지 않았습니다.
+
+Node.js 24.18 이상 24.x에서 `npm ci --cache .npm-cache --ignore-scripts`와 `npm test`로 준비·검증할 수 있습니다. 인증 설정과 실행·조회 예시는 [로컬 Daemon 개발 안내](docs/development.md)를 참고하세요.
