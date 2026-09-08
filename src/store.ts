@@ -333,9 +333,14 @@ export class RecordStore {
 
   recoverSession(sessionId: string, confirmed: boolean) {
     this.transaction(() => {
-      this.db.prepare('UPDATE sessions SET agent_unavailable = 1 WHERE id = ?').run(sessionId);
       if (confirmed) this.db.prepare("UPDATE runs SET state = 'failed', error_code = CASE WHEN delivery = 'not_attempted' THEN 'INTERRUPTED_BEFORE_DELIVERY' ELSE 'EXECUTION_OUTCOME_UNKNOWN' END, revision = revision + 1 WHERE session_id = ? AND state IN ('running','cancelling')").run(sessionId);
       else this.db.prepare("UPDATE runs SET error_code = 'PROCESS_CLEANUP_UNKNOWN', revision = revision + 1 WHERE session_id = ? AND state IN ('running','cancelling')").run(sessionId);
+      // Only a confirmed, completed conversation is eligible for lazy provider resume.
+      // Interrupted/cancelled/failed Runs remain read-only; never replay their input.
+      this.db.prepare(`UPDATE sessions SET agent_unavailable = CASE WHEN ? = 1 AND provider_session_id IS NOT NULL
+        AND (SELECT r.state FROM runs r JOIN messages m ON m.run_id = r.id AND m.role = 'assistant'
+          WHERE r.session_id = sessions.id ORDER BY m.seq DESC LIMIT 1) = 'completed'
+        THEN 0 ELSE 1 END WHERE id = ?`).run(Number(confirmed), sessionId);
     });
   }
 

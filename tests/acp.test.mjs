@@ -11,15 +11,15 @@ import { startDaemon } from '../dist/daemon.js';
 import { stopAgentJob } from '../dist/agent-process.js';
 import { connect, createSession, fixture, launch, mutation, projectRoot } from './helpers.mjs';
 
-function options(f) {
+function options(f, agentEnv = {}) {
   return { projectRoot, dataDirectory: f.data, workspaceDirectory: f.workspace, token: f.token,
     acp: { command: { executable: process.execPath, arguments: [join(projectRoot, 'tests/fake-acp.mjs')], cwd: f.workspace,
-      env: { ...process.env, TEST_AGENT_LOG: join(f.root, 'agent.log'), TEMP: f.root, TMP: f.root },
+      env: { ...process.env, ...agentEnv, TEST_AGENT_LOG: join(f.root, 'agent.log'), TEMP: f.root, TMP: f.root },
     } },
   };
 }
-async function start(f) {
-  const daemon = await startDaemon(options(f));
+async function start(f, agentEnv = {}) {
+  const daemon = await startDaemon(options(f, agentEnv));
   f.cleanups.push(() => daemon.close());
   return daemon;
 }
@@ -118,8 +118,12 @@ test('ACP streams committed output, preserves conversation context, and dispatch
   const reconnected = await connect(f, restarted);
   assert.deepEqual((await reconnected.call('runs.get', { runId })).result, completed);
   assert.deepEqual((await reconnected.call('runs.start', params, request)).result, a.result);
-  assert.equal((await reconnected.call('runs.start', { sessionId: session.sessionId, text: '새 요청' }, mutation(reconnected))).error.code, 'SESSION_UNAVAILABLE');
-  assert.equal(log(f).filter((item) => item.type === 'prompt').length, 2);
+  assert.equal((await reconnected.call('sessions.get', { sessionId: session.sessionId })).result.aiUnavailable, 0);
+  const continued = await reconnected.call('runs.start', { sessionId: session.sessionId, text: 'recall-first' }, mutation(reconnected));
+  assert.equal((await waitRun(reconnected, continued.result.run.runId)).text, '답변 3: 첫 질문');
+  assert.equal(log(f).filter((item) => item.type === 'prompt').length, 3);
+  assert.equal(log(f).filter((item) => item.type === 'new').length, 1);
+  assert.equal(log(f).find((item) => item.type === 'resume').sessionId, log(f).find((item) => item.type === 'new').sessionId);
   await restarted.close();
   const other = join(f.root, 'other-workspace');
   mkdirSync(other);
@@ -146,6 +150,100 @@ test('cancellation proves cleanup of the owned agent and descendant processes', 
   assert.equal((await waitRun(client, runId)).state, 'cancelled');
   assert.deepEqual((await client.call('runs.cancel', { runId }, request)).result, cancelled.result);
   for (const pid of pids) assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+  await daemon.close();
+  const restarted = await start(f);
+  const reconnected = await connect(f, restarted);
+  assert.equal((await reconnected.call('sessions.get', { sessionId: session.sessionId })).result.aiUnavailable, 1);
+  assert.equal((await reconnected.call('runs.start', { sessionId: session.sessionId, text: '차단' }, mutation(reconnected))).error.code, 'SESSION_UNAVAILABLE');
+});
+
+test('load-only agents replay history without duplicating stored messages or the new answer', async (t) => {
+  const f = fixture(t);
+  let daemon = await start(f);
+  let client = await connect(f, daemon);
+  const session = await createSession(client, daemon.workspace.workspaceId);
+  const started = await client.call('runs.start', { sessionId: session.sessionId, text: '기억할 첫 질문' }, mutation(client));
+  await waitRun(client, started.result.run.runId);
+  const saved = (await client.call('messages.list', { sessionId: session.sessionId })).result.messages;
+  await daemon.close();
+  const readOnly = await startDaemon({ ...options(f), acp: undefined });
+  f.cleanups.push(() => readOnly.close());
+  const reader = await connect(f, readOnly);
+  assert.equal((await reader.call('sessions.get', { sessionId: session.sessionId })).result.aiUnavailable, 1);
+  assert.deepEqual((await reader.call('messages.list', { sessionId: session.sessionId })).result.messages, saved);
+  await readOnly.close();
+  daemon = await start(f, { TEST_AGENT_RESUME: 'load' });
+  client = await connect(f, daemon);
+  const request = mutation(client);
+  const params = { sessionId: session.sessionId, text: 'recall-first' };
+  const resumed = await client.call('runs.start', params, request);
+  const run = await waitRun(client, resumed.result.run.runId);
+  assert.equal(run.state, 'completed');
+  assert.equal(run.text, '답변 2: 기억할 첫 질문');
+  assert.deepEqual((await client.call('requests.get', { workspaceId: session.workspaceId, ...request })).result.result, resumed.result);
+  assert.deepEqual((await client.call('runs.start', params, request)).result, resumed.result);
+  const messages = (await client.call('messages.list', { sessionId: session.sessionId })).result.messages;
+  assert.equal(messages.length, 4);
+  assert.deepEqual(messages.slice(0, 2), saved);
+  assert.equal(log(f).filter((item) => item.type === 'new').length, 1);
+  assert.deepEqual(log(f).filter((item) => item.type === 'resume').map((item) => item.method), ['session/load']);
+  assert.equal(log(f).filter((item) => item.type === 'prompt').length, 2);
+});
+
+for (const mode of ['unsupported', 'fail']) test(`resume ${mode} preserves provider identity and history without delivering or creating a replacement`, async (t) => {
+  const f = fixture(t);
+  let daemon = await start(f);
+  let client = await connect(f, daemon);
+  const session = await createSession(client, daemon.workspace.workspaceId);
+  const first = await client.call('runs.start', { sessionId: session.sessionId, text: '이전 기록' }, mutation(client));
+  await waitRun(client, first.result.run.runId);
+  const saved = (await client.call('messages.list', { sessionId: session.sessionId })).result.messages;
+  const providerId = log(f).find((item) => item.type === 'new').sessionId;
+  await daemon.close();
+  daemon = await start(f, { TEST_AGENT_RESUME: mode });
+  client = await connect(f, daemon);
+  const resumed = await client.call('runs.start', { sessionId: session.sessionId, text: '전달하지 않을 입력' }, mutation(client));
+  const run = await waitRun(client, resumed.result.run.runId);
+  assert.equal(run.state, 'failed');
+  assert.equal(run.delivery, 'not_attempted');
+  assert.equal(run.errorCode, mode === 'unsupported' ? 'SESSION_RESUME_UNSUPPORTED' : 'SESSION_RESUME_FAILED');
+  const messages = (await client.call('messages.list', { sessionId: session.sessionId })).result.messages;
+  assert.deepEqual(messages.slice(0, 2), saved);
+  assert.equal(messages[2].text, '전달하지 않을 입력');
+  assert.equal(messages[3].text, '');
+  assert.equal(log(f).filter((item) => item.type === 'new').length, 1);
+  assert.equal(log(f).filter((item) => item.type === 'prompt').length, 1);
+  assert.equal(log(f).filter((item) => item.type === 'resume').length, mode === 'unsupported' ? 0 : 1);
+  const db = new DatabaseSync(join(f.data, 'records.sqlite'), { readOnly: true });
+  try { assert.equal(db.prepare('SELECT provider_session_id FROM sessions WHERE id = ?').get(session.sessionId).provider_session_id, providerId); }
+  finally { db.close(); }
+  await daemon.close();
+  daemon = await start(f);
+  client = await connect(f, daemon);
+  assert.equal((await client.call('sessions.get', { sessionId: session.sessionId })).result.aiUnavailable, 1);
+});
+
+test('cancellation during resume terminates the opening agent without sending the pending prompt', async (t) => {
+  const f = fixture(t);
+  let daemon = await start(f);
+  let client = await connect(f, daemon);
+  const session = await createSession(client, daemon.workspace.workspaceId);
+  const first = await client.call('runs.start', { sessionId: session.sessionId, text: '정상 완료' }, mutation(client));
+  await waitRun(client, first.result.run.runId);
+  await daemon.close();
+  daemon = await start(f, { TEST_AGENT_RESUME: 'wait' });
+  client = await connect(f, daemon);
+  const next = await client.call('runs.start', { sessionId: session.sessionId, text: '재개 중 취소할 입력' }, mutation(client));
+  for (let n = 0; n < 240 && !log(f).some((item) => item.type === 'resume'); n++) await delay(25);
+  assert.ok(log(f).some((item) => item.type === 'resume'));
+  const pid = log(f).filter((item) => item.type === 'spawn').at(-1).pid;
+  await client.call('runs.cancel', { runId: next.result.run.runId }, mutation(client));
+  const cancelled = await waitRun(client, next.result.run.runId);
+  assert.equal(cancelled.state, 'cancelled');
+  assert.equal(cancelled.delivery, 'not_attempted');
+  assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+  assert.equal(log(f).filter((item) => item.type === 'prompt').length, 1);
+  assert.equal(log(f).filter((item) => item.type === 'new').length, 1);
 });
 
 test('cancellation during process startup never delivers the prompt or leaves a late agent', async (t) => {
@@ -184,6 +282,8 @@ test('forced daemon death cleans its job and recovers an unknown outcome without
   const run = (await client.call('runs.get', { runId })).result;
   assert.equal(run.state, 'failed');
   assert.equal(run.errorCode, 'EXECUTION_OUTCOME_UNKNOWN');
+  assert.equal((await client.call('sessions.get', { sessionId: session.sessionId })).result.aiUnavailable, 1);
+  assert.equal((await client.call('runs.start', params, mutation(client))).error.code, 'SESSION_UNAVAILABLE');
   assert.deepEqual((await client.call('runs.start', params, request)).result, started.result);
   assert.equal(log(f).filter((item) => item.type === 'prompt').length, 1);
   for (const pid of pids) assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });

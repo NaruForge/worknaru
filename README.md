@@ -114,6 +114,6 @@ Module 등록, 화면 연결과 AI 기능 사용의 구체적인 흐름은 [Modu
 
 ## 로컬 개발
 
-Daemon은 Session·텍스트 메시지의 SQLite 저장과 재시작 후 조회를 제공합니다. Windows에서는 `--acp` 옵션으로 Codex와 텍스트 대화를 실행하고, 응답 스트리밍·기록 저장·취소를 사용할 수 있습니다. 첫 Chat Web UI와 개발용 터미널 클라이언트를 제공합니다. 화면의 로컬 실행은 `npm run dev:web`, 빌드한 화면의 확인은 `npm run preview:web`를 사용합니다.
+Daemon은 Session·텍스트 메시지의 SQLite 저장과 재시작 후 조회를 제공합니다. Windows에서는 `--acp` 옵션으로 Codex와 텍스트 대화를 실행하고, 응답 스트리밍·기록 저장·취소를 사용할 수 있습니다. 정상 완료된 대화는 같은 데이터·Workspace로 재시작한 뒤 기존 AI 맥락을 이어갈 수 있습니다. 재개 조건과 실패 시 동작은 로컬 개발 안내를 따릅니다. 첫 Chat Web UI와 개발용 터미널 클라이언트를 제공합니다. 화면의 로컬 실행은 `npm run dev:web`, 빌드한 화면의 확인은 `npm run preview:web`를 사용합니다.
 
 Node.js 24.18 이상 24.x에서 `npm ci --cache .npm-cache --ignore-scripts`와 `npm test`로 준비·검증할 수 있습니다. 인증 설정과 실행·조회 예시는 [로컬 Daemon 개발 안내](docs/development.md)를 참고하세요.

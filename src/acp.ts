@@ -93,9 +93,11 @@ export class AcpRuntime {
 
   private async openAgent(sessionId: string, signal: AbortSignal): Promise<Agent> {
     signal.throwIfAborted();
-    if (this.store.binding(sessionId).providerSessionId) throw new AppError('SESSION_UNAVAILABLE', 'AI 대화를 다시 연결할 수 없습니다. 새 대화를 시작하세요.');
+    const binding = this.store.binding(sessionId);
+    if (binding.unavailable) throw new AppError('SESSION_UNAVAILABLE', 'AI 대화를 다시 연결할 수 없습니다. 새 대화를 시작하세요.');
     const jobName = `Local\\WorkNaru-${randomUUID()}`;
-    this.store.setAgent(sessionId, jobName);
+    // Keep the provider identity durable even if startup/resume is interrupted.
+    this.store.setAgent(sessionId, jobName, binding.providerSessionId);
     const process = await launchAgentJob(jobName, this.command, signal);
     let agent: Agent | undefined;
     // Bound incomplete NDJSON frames before the SDK buffers/parses them.
@@ -114,6 +116,7 @@ export class AcpRuntime {
         return { outcome: { outcome: 'cancelled' as const } };
       })
       .onNotification('session/update', ({ params }) => {
+        // session/load may replay history. It is not output from a new Run.
         if (!agent?.activeRun || params.sessionId !== agent.providerId) return;
         const update = params.update;
         if (update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'tool_call_update') {
@@ -135,10 +138,25 @@ export class AcpRuntime {
     try {
       const initialized = await withTimeout(connection.agent.request('initialize', { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {}, clientInfo: { name: 'worknaru', version: '0.0.0' } }), 30_000);
       if (initialized.protocolVersion !== PROTOCOL_VERSION) throw new AppError('ACP_VERSION_MISMATCH', '에이전트 ACP 버전을 사용할 수 없습니다.');
-      const session = await withTimeout(connection.agent.request('session/new', { cwd: this.store.workspace.path, mcpServers: [] }), 30_000);
+      let providerId = binding.providerSessionId;
+      const params = { cwd: this.store.workspace.path, mcpServers: [] };
+      if (providerId) {
+        const capabilities = initialized.agentCapabilities;
+        const method = capabilities?.sessionCapabilities?.resume ? 'session/resume' : capabilities?.loadSession ? 'session/load' : undefined;
+        if (!method) throw new AppError('SESSION_RESUME_UNSUPPORTED', '연결한 에이전트는 기존 대화 재개를 지원하지 않습니다.');
+        try {
+          await withTimeout(connection.agent.request(method, { ...params, sessionId: providerId }), 30_000, 'SESSION_RESUME_TIMEOUT');
+        } catch (error) {
+          if (error instanceof AppError) throw error;
+          throw new AppError('SESSION_RESUME_FAILED', '기존 AI 대화를 불러오지 못했습니다. 저장된 기록은 유지됩니다.');
+        }
+      } else {
+        const session = await withTimeout(connection.agent.request('session/new', { cwd: this.store.workspace.path, mcpServers: [] }), 30_000);
+        providerId = session.sessionId;
+      }
       signal.throwIfAborted();
-      this.store.setAgent(sessionId, jobName, session.sessionId);
-      agent = { process, connection, providerId: session.sessionId };
+      this.store.setAgent(sessionId, jobName, providerId);
+      agent = { process, connection, providerId };
       this.agents.set(sessionId, agent);
       return agent;
     } catch (error) {
