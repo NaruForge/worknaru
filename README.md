@@ -105,3 +105,5 @@ Chat은 대화 목록, 메시지 입력·표시 등 사용자가 AI와 대화하
 작업과 의사결정의 기록 및 운영 기준은 [프로젝트 기록 규약](docs/project-records.md)을 따릅니다.
 
 Module 등록, 화면 연결과 AI 기능 사용의 구체적인 흐름은 [Module과 플랫폼의 연결 규칙](docs/design/module-platform-contract.md)에서 설명합니다. 후속 상세 설계가 필요한 부분도 함께 명시합니다.
+
+첫 구현의 저장소 구성과 큰 책임 경계는 [초기 저장소 구성 설계안](docs/design/repository-structure.md)에서 제안합니다. 세부 폴더·파일 배치는 구현하면서 정합니다.
