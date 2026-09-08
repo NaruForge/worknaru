@@ -6,11 +6,11 @@
 
 ## 지원하는 범위
 
-현재 Daemon은 Session과 텍스트 메시지를 SQLite에 저장하고, 재시작 뒤 기록과 최초 접수 결과를 조회한다. 한 실행에서 명시한 Workspace 하나에 접근할 수 있다. 실제 AI 연결·Chat 화면·실시간 구독은 아직 제공하지 않는다.
+Daemon은 Session과 텍스트 메시지를 SQLite에 저장하고, 재시작 뒤 기록과 최초 접수 결과를 조회한다. 한 실행에서 명시한 Workspace 하나에 접근할 수 있다. Windows에서 `--acp`로 실행하면 아래의 실제 Codex 대화와 실행별 구독을 추가로 제공한다. Chat 화면은 후속 범위다.
 
-첫 저장 연산은 `messages.append`다. `accepted: true`는 메시지와 접수 결과가 커밋됐다는 뜻이며 `aiExecution: false`를 함께 돌려준다. 저장한 메시지를 자동으로 AI에 보내지 않는다. `runs.start`는 지원 기능에 포함하지 않고 호출하면 `METHOD_NOT_SUPPORTED`로 거절한다.
+저장 연산은 `messages.append`다. `accepted: true`는 메시지와 접수 결과가 커밋됐다는 뜻이며 `aiExecution: false`를 함께 돌려준다. 저장한 메시지를 자동으로 AI에 보내지 않는다. 실제 AI 실행은 `--acp`가 활성화된 데몬의 `runs.start`로 요청한다.
 
-이는 [통신](design/client-daemon-protocol.md)·[저장](design/chat-storage-and-recovery.md) 초안의 전체 AI 흐름 중 기록 저장을 먼저 검증하는 구현이다. 메시지는 이 단계에서 Run 없이 저장된다. 실제 실행 접수와 메시지·Run의 연결은 ACP 단계에서 구체화한다. 기존 초안의 모든 연산과 필드를 구현했다고 해석하지 않는다.
+이는 [통신](design/client-daemon-protocol.md)·[저장](design/chat-storage-and-recovery.md) 초안 중 첫 텍스트 흐름을 검증하는 구현이다. `messages.append`는 Run 없이 저장하며, `runs.start`는 Run과 사용자·답변 메시지를 함께 만든다. 아래 계약은 현재 구현 기준이며 초안의 모든 연산과 필드를 제공한다는 뜻은 아니다.
 
 ## 준비와 실행
 
@@ -97,3 +97,70 @@ npm start -- --data-dir .worknaru-dev --workspace .
 WebSocket 서버는 `ws`, 입력 검증은 `zod`, 시험은 Node.js 내장 test runner를 사용한다. 실제 사용 버전은 루트 manifest와 lockfile에 고정한다. [ws 공식 문서](https://github.com/websockets/ws/blob/master/README.md), [Zod API](https://zod.dev/api)
 
 동작 시험은 실제 프로세스의 강제 종료·재시작, 응답 유실 모사, 동시 중복 접수, 저장 트랜잭션 실패, 접속·대상 접근 거절, 페이지 한도, 중복 데몬, 잘못된 데이터 경로·DB 형식을 확인한다. 불완전한 HTTP 연결이 남아 있어도 정상 종료와 저장소 잠금 해제가 완료되는지도 확인한다. 시험 종료 시 이번 시험이 만든 프로젝트 내부 데이터와 프로세스를 정리한다.
+
+## 실제 Codex 텍스트 대화
+
+- 작업: [#8 ACP로 첫 실제 AI 대화 실행 연결](https://github.com/NaruForge/worknaru/issues/8).
+- 환경: Windows, Node.js 24.18 이상 24.x, PATH에서 실행 가능한 PowerShell 7의 `pwsh.exe`, 유효한 Codex 로그인이 필요하다.
+- 연결: `@agentclientprotocol/sdk` 1.4.0의 안정 ACP v1과 `@agentclientprotocol/codex-acp` 1.10.0을 사용한다. 실제 검증은 설치된 Codex CLI 0.153.4를 명시했다. 버전은 manifest·lockfile에 기록한다.
+
+앞 절의 토큰을 설정한 터미널에서 데몬을 실행한다. `--codex-path`를 생략하면 ACP 어댑터가 제공하는 Codex 실행 파일 탐색을 사용한다.
+
+```powershell
+npm run build
+npm start -- --data-dir .worknaru-dev --workspace . --acp --codex-path (Get-Command codex.exe).Source
+```
+
+다른 터미널에 같은 `WORKNARU_TOKEN`을 설정한 뒤, 출력된 URL로 질문한다. 첫 호출은 Session을 만들며 마지막 줄에 `sessionId`와 `runId`를 출력한다. 같은 데몬의 기존 대화에 후속 질문을 보낼 때는 출력된 Session ID를 지정한다.
+
+```powershell
+npm run chat -- --url ws://127.0.0.1:<port>/ws --text "안녕"
+npm run chat -- --url ws://127.0.0.1:<port>/ws --session <sessionId> --text "앞선 대화를 요약해 줘"
+```
+
+클라이언트에서 Ctrl+C를 누르면 해당 실행의 취소를 요청한다. 클라이언트 연결만 끊기면 데몬은 실행을 계속한다. 데몬의 Ctrl+C는 새 요청을 막고 관리하는 에이전트를 정리한 뒤 저장소를 닫는다.
+
+기존 CLI의 `CODEX_HOME` 또는 기본 `.codex`에 있는 `auth.json`을 개발 데이터 안의 `codex/auth.json`으로 복사해 사용한다. 원본 CLI 설정·로그인은 변경하지 않는다. 에이전트 기록과 임시 파일도 개발 데이터 안에 둔다. 이 영역에는 인증정보와 대화 기록이 있으므로 Git에 추가하지 않는다. 별도의 로그인 UI나 자격증명 관리 기능은 제공하지 않는다.
+
+### 실행 계약
+
+| 연산 | 입력과 결과 |
+| --- | --- |
+| `runs.start` | 변경 요청 ID·epoch와 `sessionId`, `text`를 받는다. Run·사용자 메시지·빈 답변 메시지·최초 접수 결과를 한 번에 커밋한다. 반환하는 `accepted`는 접수 확정이며 AI 완료를 뜻하지 않는다. |
+| `runs.get` | `runId`로 현재 상태, 저장된 답변 `text`, `revision`, `errorCode`, `stopReason`, `storageAvailable`을 조회한다. |
+| `runs.watch` | `runId`의 현재 스냅샷을 반환하고 그 뒤 커밋을 `run.changed`로 보낸다. 같은 이벤트 루프에서 조회·구독을 등록하므로 중간 커밋이 빠지지 않는다. |
+| `runs.unwatch` | 해당 연결의 Run 구독을 해제한다. |
+| `runs.cancel` | 변경 요청 ID·epoch와 `runId`를 받는다. `cancelling`을 저장하고 ACP 취소 및 프로세스 정리를 수행한다. 종료 확인 이후 `cancelled`를 저장한다. 이미 최종 상태인 Run은 유지한다. |
+
+변경 연산은 기존 `requestId`·내용 충돌 규칙을 따른다. 같은 실행 요청을 재전송해도 최초 접수 결과만 반환하며 AI에 다시 전달하지 않는다. **최초 접수 결과의 Run은 당시 스냅샷이다. 현재 상태는 `runs.get` 또는 `runs.watch`로 확인한다.** 같은 Session에서 다른 Run이 미종료 상태라면 `SESSION_BUSY`로 거절한다.
+
+`messages.list`에 `role`(`user` 또는 `assistant`)과 `runId`가 추가된다. 실행 중 답변 메시지는 커밋마다 갱신된다. 메시지 페이지의 `upTo`는 메시지 순번 상한이며 실행 중 본문을 과거 시점에 고정하는 값은 아니다. 실행의 일관된 답변 스냅샷에는 `runs.get/watch`의 `revision`을 사용한다. 답변 조각은 저장 후 전달하며, 종료 상태는 늦은 출력으로 되돌리지 않는다.
+
+`run.changed`는 전체 Run 스냅샷이다. 클라이언트는 현재 Run과 revision을 기준으로 반영하고 재접속하면 다시 구독한다. 전체 대화를 이벤트로 보관·재생하지 않는다. 저장 장애 중에는 `storageAvailable: false`로 마지막 저장 상태와 현재 실행 여부를 구분한다. 저장하지 못한 완료를 확정하지 않으며, 클라이언트는 조회로 저장소 상태도 확인해야 한다.
+
+### 종료와 재시작
+
+Windows 감독 프로세스가 이름이 있는 Job Object를 만들고, 에이전트를 일시 정지 상태로 생성해 Job에 명시적으로 넣은 뒤 실행한다. 자식 프로세스도 같은 관리 범위에 들어간다. Job 이름은 생성 전에 저장하며 PID 목록으로 소유권을 추정하지 않는다. 데몬의 시작 확인 응답 전에는 에이전트를 실행하지 않고, 입력 파이프가 닫히거나 감독 프로세스가 종료되면 Job을 정리한다. 재시작 시 저장된 Job을 정리하고 활성 프로세스가 없는지 확인한다. [Microsoft Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)
+
+중단된 입력은 자동 재전송하지 않는다. 전달 전 중단은 `INTERRUPTED_BEFORE_DELIVERY`, 전달을 시도했으나 결과가 불명확하면 `EXECUTION_OUTCOME_UNKNOWN`으로 실패 처리한다. 정리를 확인하지 못하면 `PROCESS_CLEANUP_UNKNOWN`과 미종료 상태를 유지하며 해당 Session의 새 실행을 막는다. 이 오류는 파일 변경이 없었다는 뜻이 아니다.
+
+첫 구현은 프로바이더 Session의 재개·불러오기를 제공하지 않는다. 같은 데몬에서 정상 완료한 대화는 후속 입력을 받지만, 취소·연결 실패·데몬 재시작 뒤에는 기록을 열람하고 새 Session을 시작한다. `sessions.get`의 `aiUnavailable`과 `SESSION_UNAVAILABLE`로 이를 구분한다. 저장한 전문을 새 에이전트에 자동 전송해 기존 맥락처럼 취급하지 않는다. ACP 비활성 상태에서도 실행 기록은 조회할 수 있으나 미확정 프로세스 정리는 `--acp` 재시작으로 수행한다.
+
+### 현재 한도와 검증 범위
+
+- 텍스트 입력과 실행별 답변은 각각 UTF-8 16KiB다. 답변 한도 초과 시 저장된 부분을 보존하고 `OUTPUT_LIMIT`으로 실패 처리한다. 첨부 파일·이미지·큰 답변의 조각 조회는 후속 범위다.
+- 데몬당 열린 에이전트 연결은 최대 4개, 클라이언트당 Run 구독은 최대 16개다. 연결 해제 UI·유휴 정리 정책은 후속 범위이며 초기 연결은 정상 대화의 맥락 유지를 위해 유지한다.
+- 감독 프로세스 준비 15초, ACP 초기화·Session 생성 각 30초, 질문 실행 120초의 한도를 적용한다. 정상 취소는 ACP 알림 뒤 프로세스 트리 정리까지 확인한다. Job 조사·종료를 확인하지 못하면 성공으로 간주하지 않는다.
+- 텍스트 응답을 지시하고 셸·앱·플러그인 등 연결 기능을 끈 개발 설정으로 실행한다. ACP 파일·터미널 기능을 제공하거나 권한 요청을 자동 승인하지 않는다. 도구 이벤트는 `TOOLS_UNSUPPORTED`, 권한 요청은 `PERMISSION_UNSUPPORTED`로 실패 처리한다. 이 클라이언트 설정은 악성 에이전트를 격리하는 보안 경계가 아니며, 어댑터의 `read-only`라는 모드 이름도 실제 파일시스템 읽기 전용을 보장하지 않는다. 도구 실행·승인 UI는 후속 범위다.
+- 저장소 v1을 처음 열면 SQLite `VACUUM INTO`로 `records-v1-<uuid>.sqlite` 백업을 만든 다음 트랜잭션으로 v2로 전환한다. 메시지·최초 접수 결과·epoch를 유지한다. 지원 밖 형식이나 실패한 변경을 빈 DB로 대체하지 않는다. 사용자용 백업·복원 기능은 제공하지 않는다.
+
+`npm test`는 실제 SQLite와 별도 ACP 시험 프로세스로 중복·경쟁·스트리밍·취소·시작 중 취소·강제 종료·재시작·저장 장애·출력 및 프로토콜 한도·v1 변환·개발용 클라이언트를 검증한다. 시험용 에이전트 선택은 시험 진입점에만 있으며 제품 실행 옵션으로 노출하지 않는다.
+
+실제 Codex와의 확인은 별도로 실행하며 모델 요청을 발생시킨다. 기존 로그인이 있어야 한다. 두 차례 질문으로 응답 스트리밍과 대화 맥락을 확인하고 데몬 재시작 후 저장 기록을 비교한다. 시험이 생성한 데이터·인증 사본·프로세스는 종료 시 정리한다.
+
+```powershell
+$env:WORKNARU_CODEX_PATH = (Get-Command codex.exe).Source
+npm run test:live
+```
+
+관련 공식 자료: [ACP 초기화](https://agentclientprotocol.com/protocol/v1/initialization), [질문과 취소](https://agentclientprotocol.com/protocol/v1/prompt-turn), [Codex ACP 어댑터](https://github.com/agentclientprotocol/codex-acp), [Codex 설정](https://learn.chatgpt.com/codex/config-reference).

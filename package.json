@@ -10,9 +10,13 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "start": "node dist/main.js",
-    "test": "npm run build && node --test tests/*.test.mjs"
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "chat": "node dist/chat-client.js",
+    "test:live": "npm run build && node --test tests/live-acp.mjs"
   },
   "dependencies": {
+    "@agentclientprotocol/codex-acp": "1.10.0",
+    "@agentclientprotocol/sdk": "1.4.0",
     "ws": "8.21.3",
     "zod": "4.5.4"
   },
