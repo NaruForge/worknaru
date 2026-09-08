@@ -3,12 +3,14 @@
 ## Provider와 적용 대상
 
 - Work Item provider: **GitHub**.
-- 저장소: [SWBaek/worknaru](https://github.com/SWBaek/worknaru) (비공개).
-- Project: [worknaru #6](https://github.com/users/SWBaek/projects/6), 소유자 `SWBaek`, 비공개, ID `PVT_kwHOAmTnZc4BiyCQ`.
+- 저장소: [NaruForge/worknaru](https://github.com/NaruForge/worknaru) (비공개).
+- Project: [worknaru #6](https://github.com/users/NaruForge/projects/6), 소유자 `NaruForge`, 비공개, ID `PVT_kwHOAmTnZc4BiyCQ`.
 - Progress field: native `Status`, ID `PVTSSF_lAHOAmTnZc4BiyCQzhhoxCo`.
-- Board: [Repository work](https://github.com/users/SWBaek/projects/6/views/1), Status별 그룹, filter `repo:SWBaek/worknaru is:issue`.
+- Board: [Repository work](https://github.com/users/NaruForge/projects/6/views/1), Status별 그룹, filter `repo:NaruForge/worknaru is:issue`.
 - 초기 선택 근거: 기존 GitHub 원격과 활성화된 Issues, 지속적인 제품 개발 목적. 설치 당시 로컬 기록, Issue, PR, Milestone, 연결된 Project가 없었다.
 - Project를 읽거나 쓸 수 없는 경우 진행 상태를 로컬 backlog나 status label로 대신 기록하지 않고 접근 문제를 보고한다.
+
+2026-09-08 사용자가 저장소 주소 변경을 확인했다. GitHub에서 현재 저장소와 Project의 소유자, 비공개 여부, 저장소 연결 및 동일한 Project ID를 재확인해 위 주소를 갱신했다. 사용자 요청에 따라 Board filter도 현재 저장소 주소로 수정하고 재조회로 적용을 확인했다. 설치 당시의 근거와 Blueprint provenance는 당시 기록으로 보존한다.
 
 이 문서와 Agent 지침, GitHub의 native surface만으로 운영한다. Blueprint 재열람, bootstrap Skill, 서비스, 데이터베이스, 상태 동기화나 수동 index는 일상 운영의 전제 조건이 아니다.
 
