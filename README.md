@@ -108,6 +108,8 @@ Module 등록, 화면 연결과 AI 기능 사용의 구체적인 흐름은 [Modu
 
 첫 구현의 저장소 구성과 큰 책임 경계는 [초기 저장소 구성 설계](docs/design/repository-structure.md)에서 설명합니다. 세부 폴더·파일 배치는 구현하면서 정합니다.
 
+공통 화면과 첫 Chat은 [승인된 UI 기준](docs/design/workspace-chat-ui.md)을 따릅니다. 공통 서비스 탐색과 Module 내부 탐색을 분리하고, Module이 자신의 목록과 본문을 구성합니다.
+
 ## 로컬 개발
 
 Daemon은 Session·텍스트 메시지의 SQLite 저장과 재시작 후 조회를 제공합니다. Windows에서는 `--acp` 옵션으로 Codex와 텍스트 대화를 실행하고, 응답 스트리밍·기록 저장·취소를 사용할 수 있습니다. 개발용 터미널 클라이언트를 제공하며 Chat 화면은 후속 범위입니다.
