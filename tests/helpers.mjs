@@ -41,8 +41,8 @@ export async function deadline(promise, ms = 8_000) {
 
 export async function launch(f, overrides = {}) {
   const settings = { ...f, ...overrides };
-  const child = spawn(process.execPath, [join(projectRoot, 'dist/main.js'), '--data-dir', settings.data, '--workspace', settings.workspace, '--port', '0'], {
-    cwd: projectRoot, env: { ...process.env, WORKNARU_TOKEN: settings.token },
+  const child = spawn(process.execPath, [settings.entry ?? join(projectRoot, 'dist/main.js'), '--data-dir', settings.data, '--workspace', settings.workspace, '--port', '0', ...(settings.extraArgs ?? [])], {
+    cwd: projectRoot, env: { ...process.env, ...settings.env, WORKNARU_TOKEN: settings.token },
     stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
   });
   let output = '';
@@ -72,9 +72,11 @@ export async function connect(f, daemon, token = f.token, options = {}) {
   const ws = new WebSocket(daemon.url, options);
   ws.on('error', () => {});
   const queue = [];
+  const events = [];
   const waiters = [];
   ws.on('message', (data) => {
     const value = JSON.parse(data.toString());
+    if (value.type === 'run.changed') { events.push(value); return; }
     const waiter = waiters.shift();
     if (waiter) waiter.resolve(value); else queue.push(value);
   });
@@ -96,7 +98,7 @@ export async function connect(f, daemon, token = f.token, options = {}) {
     assert.equal(response.callId, callId);
     return response;
   };
-  return { ws, ready, send, receive, call };
+  return { ws, ready, send, receive, call, events };
 }
 
 export function mutation(client, requestId = randomUUID()) {

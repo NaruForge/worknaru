@@ -6,6 +6,9 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { AppError, helloSchema, MAX_MESSAGE_BYTES, MAX_TEXT_BYTES, PROTOCOL_MAJOR, publicError, requestSchema } from './protocol.js';
 import { prepareDataDirectory } from './paths.js';
 import { RecordStore } from './store.js';
+import type { Run } from './store.js';
+import { AcpRuntime } from './acp.js';
+import type { AcpOptions } from './acp.js';
 
 const MAX_CLIENTS = 16;
 const MAX_OUTPUT_BYTES = 256 * 1024;
@@ -19,6 +22,7 @@ export type DaemonOptions = {
   token: string;
   port?: number;
   origins?: string[];
+  acp?: AcpOptions;
 };
 
 export async function startDaemon(options: DaemonOptions) {
@@ -37,6 +41,20 @@ export async function startDaemon(options: DaemonOptions) {
   }
   const directory = prepareDataDirectory(options.projectRoot, options.dataDirectory);
   const store = new RecordStore(directory, options.workspaceDirectory);
+  const subscriptions = new Map<WebSocket, Set<string>>();
+  let runtime: AcpRuntime | undefined;
+  try {
+    runtime = options.acp ? new AcpRuntime(store, options.projectRoot, directory, options.acp, (run: Run) => {
+      for (const [socket, watched] of subscriptions) if (watched.has(run.runId)) send(socket, { type: 'run.changed', run });
+    }) : undefined;
+    if (runtime) await runtime.recover();
+    else if (store.recoverySessions().length) {
+      // Query-only startup still prevents stale executions from appearing active.
+      for (const session of store.recoverySessions()) store.recoverSession(session.sessionId, false);
+    }
+    if (!runtime) store.recoverUndelivered();
+  } catch (error) { store.close(); throw error; }
+  const methods = runtime ? [...METHODS, 'runs.start', 'runs.cancel', 'runs.get', 'runs.watch', 'runs.unwatch'] : [...METHODS, 'runs.get', 'runs.watch', 'runs.unwatch'];
   const instanceId = randomUUID();
   const token = Buffer.from(options.token);
   const server = createServer((_request, response) => {
@@ -71,7 +89,7 @@ export async function startDaemon(options: DaemonOptions) {
     let windowStart = Date.now();
     const timeout = setTimeout(() => socket.terminate(), 5_000);
     timeout.unref();
-    socket.on('close', () => clearTimeout(timeout));
+    socket.on('close', () => { clearTimeout(timeout); subscriptions.delete(socket); });
     socket.on('error', () => { /* Closing a malformed connection does not affect other clients. */ });
     socket.on('message', (raw, binary) => {
       if (socket.readyState !== WebSocket.OPEN) return;
@@ -101,7 +119,7 @@ export async function startDaemon(options: DaemonOptions) {
         send(socket, {
           type: 'ready', protocolMajor: PROTOCOL_MAJOR, connectionId: randomUUID(),
           daemonInstanceId: instanceId, storeEpoch: store.epoch,
-          capabilities: METHODS, aiExecution: false,
+          capabilities: methods, aiExecution: Boolean(runtime),
           limits: { maxMessageBytes: MAX_MESSAGE_BYTES, maxTextBytes: MAX_TEXT_BYTES, maxResponseBytes: MAX_OUTPUT_BYTES },
         });
         return;
@@ -113,7 +131,7 @@ export async function startDaemon(options: DaemonOptions) {
         if (typeof envelope.callId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(envelope.callId)) {
           failConnection('INVALID_REQUEST', '유효한 호출 ID가 필요합니다.'); return;
         }
-        const unsupported = typeof envelope.method === 'string' && !METHODS.includes(envelope.method);
+        const unsupported = typeof envelope.method === 'string' && !methods.includes(envelope.method);
         send(socket, { type: 'response', callId: envelope.callId, ok: false, error: {
           code: unsupported ? 'METHOD_NOT_SUPPORTED' : 'INVALID_REQUEST',
           message: unsupported ? '지원하지 않는 기능입니다.' : '요청 형식이나 입력 한도를 확인하세요.',
@@ -121,8 +139,22 @@ export async function startDaemon(options: DaemonOptions) {
         return;
       }
       try {
+        if (stopping) throw new AppError('DAEMON_STOPPING', '데몬을 종료하고 있습니다.');
+        if (!methods.includes(parsed.data.method)) throw new AppError('METHOD_NOT_SUPPORTED', '지원하지 않는 기능입니다.');
         const result = store.handle(parsed.data);
+        if (parsed.data.method === 'runs.watch') {
+          const watched = subscriptions.get(socket) ?? new Set<string>();
+          if (watched.size >= 16 && !watched.has(parsed.data.params.runId)) throw new AppError('SUBSCRIPTION_LIMIT', '실행 구독 한도에 도달했습니다.');
+          watched.add(parsed.data.params.runId);
+          subscriptions.set(socket, watched);
+        }
+        if (parsed.data.method === 'runs.unwatch') subscriptions.get(socket)?.delete(parsed.data.params.runId);
         send(socket, { type: 'response', callId: parsed.data.callId, ok: true, result });
+        if (parsed.data.method === 'runs.start') runtime!.start((result as { run: Run }).run.runId);
+        if (parsed.data.method === 'runs.cancel') {
+          runtime!.emit(parsed.data.params.runId);
+          void runtime!.cancel(parsed.data.params.runId).catch(() => {});
+        }
       } catch (error) {
         send(socket, { type: 'response', callId: parsed.data.callId, ok: false, error: publicError(error) });
       }
@@ -149,6 +181,7 @@ export async function startDaemon(options: DaemonOptions) {
     await once(server, 'listening');
   } catch (error) {
     wss.close();
+    await runtime?.close();
     store.close();
     throw error;
   }
@@ -163,6 +196,7 @@ export async function startDaemon(options: DaemonOptions) {
       closing ??= (async () => {
         try {
           stopping = true;
+          await runtime?.close();
           const serverClosed = new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
           for (const socket of wss.clients) socket.terminate();
           // Include partial HTTP requests and rejected upgrades, which wss does not own.

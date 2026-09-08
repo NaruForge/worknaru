@@ -110,6 +110,6 @@ Module 등록, 화면 연결과 AI 기능 사용의 구체적인 흐름은 [Modu
 
 ## 로컬 개발
 
-첫 Daemon은 Session·텍스트 메시지의 SQLite 저장과 재시작 후 조회를 제공합니다. 실제 AI 연결과 Chat 화면은 아직 구현하지 않았습니다.
+Daemon은 Session·텍스트 메시지의 SQLite 저장과 재시작 후 조회를 제공합니다. Windows에서는 `--acp` 옵션으로 Codex와 텍스트 대화를 실행하고, 응답 스트리밍·기록 저장·취소를 사용할 수 있습니다. 개발용 터미널 클라이언트를 제공하며 Chat 화면은 후속 범위입니다.
 
 Node.js 24.18 이상 24.x에서 `npm ci --cache .npm-cache --ignore-scripts`와 `npm test`로 준비·검증할 수 있습니다. 인증 설정과 실행·조회 예시는 [로컬 Daemon 개발 안내](docs/development.md)를 참고하세요.

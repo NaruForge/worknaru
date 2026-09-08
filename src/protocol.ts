@@ -10,6 +10,9 @@ const uuid = z.uuid();
 const sequence = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const base = { type: z.literal('request'), callId: id };
 const mutation = { ...base, requestId: id, storeEpoch: uuid };
+const textInput = z.string().min(1).max(MAX_TEXT_BYTES).refine(
+  (value) => value.isWellFormed() && value.trim().length > 0 && Buffer.byteLength(value) <= MAX_TEXT_BYTES,
+);
 
 export const helloSchema = z.strictObject({
   type: z.literal('hello'),
@@ -18,6 +21,11 @@ export const helloSchema = z.strictObject({
 });
 
 export const requestSchema = z.discriminatedUnion('method', [
+  z.strictObject({ ...mutation, method: z.literal('runs.start'), params: z.strictObject({ sessionId: uuid, text: textInput }) }),
+  z.strictObject({ ...mutation, method: z.literal('runs.cancel'), params: z.strictObject({ runId: uuid }) }),
+  z.strictObject({ ...base, method: z.literal('runs.get'), params: z.strictObject({ runId: uuid }) }),
+  z.strictObject({ ...base, method: z.literal('runs.watch'), params: z.strictObject({ runId: uuid }) }),
+  z.strictObject({ ...base, method: z.literal('runs.unwatch'), params: z.strictObject({ runId: uuid }) }),
   z.strictObject({ ...base, method: z.literal('workspaces.get'), params: z.strictObject({}) }),
   z.strictObject({
     ...mutation, method: z.literal('sessions.create'),

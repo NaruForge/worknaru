@@ -7,16 +7,17 @@ try {
   const { values } = parseArgs({ options: {
     'data-dir': { type: 'string' }, workspace: { type: 'string' },
     port: { type: 'string' }, origin: { type: 'string', multiple: true },
-    help: { type: 'boolean' },
+    help: { type: 'boolean' }, acp: { type: 'boolean' }, 'codex-path': { type: 'string' },
   } });
   if (values.help || !values['data-dir'] || !values.workspace) {
-    console.log('Usage: npm start -- --data-dir .worknaru-dev --workspace <existing-folder> [--port 0] [--origin http://127.0.0.1:3000]\nSet WORKNARU_TOKEN to a random base64url token (32 bytes or more).');
+    console.log('Usage: npm start -- --data-dir .worknaru-dev --workspace <existing-folder> [--port 0] [--origin http://127.0.0.1:3000] [--acp] [--codex-path <codex.exe>]\nSet WORKNARU_TOKEN to a random base64url token (32 bytes or more).');
     if (!values.help) process.exitCode = 1;
   } else {
     const daemon = await startDaemon({
       projectRoot: fileURLToPath(new URL('../', import.meta.url)),
       dataDirectory: values['data-dir'], workspaceDirectory: values.workspace,
       port: values.port === undefined ? 0 : Number(values.port),
+      acp: values.acp ? { codexPath: values['codex-path'] } : undefined,
       token: process.env.WORKNARU_TOKEN ?? '', origins: values.origin,
     });
     console.log(JSON.stringify({ type: 'daemon.ready', ...{
