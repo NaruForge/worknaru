@@ -5,10 +5,11 @@ import { aiSelectionSchema } from './ai-settings.js';
 import type { AiInfo, AiSelection, AiSettings } from './ai-settings.js';
 
 const pendingSchema = z.object({
-  method: z.enum(['sessions.create', 'runs.start', 'runs.cancel', 'settings.update', 'sessions.configure']),
+  method: z.enum(['sessions.create', 'runs.start', 'runs.cancel', 'settings.update', 'sessions.configure', 'permissions.respond']),
   requestId: z.uuid(), storeEpoch: z.uuid(), workspaceId: z.uuid(),
   sessionId: z.uuid().optional(), text: z.string().optional(),
   selection: aiSelectionSchema.optional(),
+  runId: z.uuid().optional(), toolId: z.uuid().optional(),
 });
 type Pending = z.infer<typeof pendingSchema>;
 type Page = { messages: Message[]; upTo: number; nextAfter: number | null };
@@ -101,6 +102,7 @@ export class ChatStateStore {
       const page = await this.client.call('messages.list', { sessionId, limit: 50 });
       if (version !== this.selection) return;
       this.update({ pages: { ...this.state.pages, [sessionId]: page }, loading: false });
+      await this.loadRunHistory(page);
     } catch (error) { if (version === this.selection) this.update({ loading: false, error: errorText(error) }); }
   }
   async moreMessages() {
@@ -114,10 +116,20 @@ export class ChatStateStore {
       const page = await this.client.call('messages.list', { sessionId, after: previous.nextAfter, upTo: previous.upTo, limit: 50 });
       if (version !== this.selection) return;
       this.update({ pages: { ...this.state.pages, [sessionId]: { ...page, messages: [...previous.messages, ...page.messages] } } });
+      await this.loadRunHistory(page);
     } catch (error) { if (version === this.selection) this.update({ error: errorText(error) }); }
     finally { if (version === this.selection) this.update({ loading: false }); }
   }
 
+  private async loadRunHistory(page: Page) {
+    const generation = this.generation;
+    for (const message of page.messages) {
+      if (message.role !== 'assistant' || !message.runId || this.state.runs[message.runId]) continue;
+      const run = await this.client.call('runs.get', { runId: message.runId });
+      if (generation !== this.generation) return;
+      this.receiveRun(run);
+    }
+  }
   private receiveRun(run: Run) {
     const previous = this.state.runs[run.runId];
     if (previous && run.revision < previous.revision) return;
@@ -161,6 +173,7 @@ export class ChatStateStore {
       try {
         if (this.state.selected) { await this.refreshSession(this.state.selected); await this.refreshTail(); }
         if (Date.now() - this.lastListRefresh > 5_000) await this.list();
+        await this.refreshOtherRuns();
       } catch (error) { if (generation === this.generation) this.update({ error: errorText(error) }); }
       finally { if (generation === this.generation) this.schedule(); }
     }, 1_000);
@@ -228,12 +241,34 @@ export class ChatStateStore {
     const pending: Pending = { method: 'runs.start', sessionId: session.sessionId, text, requestId: crypto.randomUUID(), storeEpoch: this.state.ready!.storeEpoch, workspaceId: session.workspaceId };
     await this.mutate(pending, () => this.client.call('runs.start', { sessionId: session.sessionId, text }, pendingIdentity(pending)));
   }
-  async cancel() {
+  async cancel(runId?: string) {
     const session = this.state.sessions.find((item) => item.sessionId === this.state.selected);
-    const run = session?.latestRunId ? this.state.runs[session.latestRunId] : undefined;
+    const run = runId ? this.state.runs[runId] : session?.latestRunId ? this.state.runs[session.latestRunId] : undefined;
     if (!this.canMutate() || !run || run.state !== 'running' || !run.storageAvailable) return;
     const pending: Pending = { method: 'runs.cancel', sessionId: run.sessionId, requestId: crypto.randomUUID(), storeEpoch: this.state.ready!.storeEpoch, workspaceId: this.state.workspace!.workspaceId };
     await this.mutate(pending, () => this.client.call('runs.cancel', { runId: run.runId }, pendingIdentity(pending)));
+  }
+  async respondPermission(runId: string, toolId: string, decision: 'allow' | 'reject') {
+    if (!this.canMutate()) return;
+    const run = this.state.runs[runId];
+    if (!run?.storageAvailable || run.state !== 'running' || !run.tools.some((tool) => tool.toolId === toolId && tool.state === 'pending')) return;
+    const pending: Pending = { method: 'permissions.respond', runId, toolId, sessionId: run.sessionId,
+      requestId: crypto.randomUUID(), storeEpoch: this.state.ready!.storeEpoch, workspaceId: this.state.workspace!.workspaceId };
+    await this.mutate(pending, () => this.client.call('permissions.respond', { runId, toolId, decision }, pendingIdentity(pending)));
+    await this.check();
+  }
+  private async refreshOtherRuns() {
+    const generation = this.generation;
+    const ids = new Set([
+      ...this.state.sessions.filter((session) => ['running', 'cancelling'].includes(session.latestRunState ?? '')).map((session) => session.latestRunId),
+      ...Object.values(this.state.runs).filter((run) => !final(run)).map((run) => run.runId),
+    ]);
+    for (const runId of ids) {
+      if (!runId || runId === this.watched) continue;
+      const run = await this.client.call('runs.get', { runId });
+      if (generation !== this.generation) return;
+      this.receiveRun(run);
+    }
   }
   private async applyReceipt(result: { session: Session } | { run: Run } | { settings: AiSettings }, pending: Pending) {
     if ('settings' in result) {
@@ -244,6 +279,12 @@ export class ChatStateStore {
       await this.select(result.session.sessionId);
     } else {
       this.receiveRun(result.run);
+      if (pending.method === 'permissions.respond') {
+        const generation = this.generation;
+        const current = await this.client.call('runs.get', { runId: result.run.runId });
+        if (generation !== this.generation) return;
+        this.receiveRun(current);
+      }
       if (pending.method === 'runs.start' && pending.sessionId && this.state.drafts[pending.sessionId] === pending.text)
         this.update({ drafts: { ...this.state.drafts, [pending.sessionId]: '' } });
       await this.refreshSession(result.run.sessionId);

@@ -275,7 +275,7 @@ test('v2 migration backs up records and preserves receipts while requiring an ex
   const append = await client.call('messages.append', { sessionId: session.sessionId, text: 'v2 기록' }, identity);
   await daemon.close();
   const db = new DatabaseSync(join(f.data, 'records.sqlite'));
-  db.exec(`DROP TABLE ai_settings;
+  db.exec(`DROP TABLE file_approvals; DROP TABLE ai_settings;
     ALTER TABLE sessions DROP COLUMN ai_model; ALTER TABLE sessions DROP COLUMN ai_effort;
     ALTER TABLE runs DROP COLUMN ai_model; ALTER TABLE runs DROP COLUMN ai_effort; ALTER TABLE runs DROP COLUMN model_confirmed;
     PRAGMA user_version = 2;`);

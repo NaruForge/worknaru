@@ -18,7 +18,8 @@
     "chat": "node dist/chat-client.js",
     "test:live": "npm run build && node --test tests/live-acp.mjs",
     "test:web": "npm run build && playwright test",
-    "test:web:live": "npm run build && node --test tests/web-live.mjs"
+    "test:web:live": "npm run build && node --test tests/web-live.mjs",
+    "test:files:live": "npm run build && node --test tests/files-live.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/codex-acp": "1.10.0",

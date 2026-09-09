@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import { aiInfoSchema, aiSettingsSchema } from './ai-settings.js';
 import type { AiSelection } from './ai-settings.js';
+import { fileApprovalSchema } from './file-approval.js';
 
 const id = z.uuid();
 const seq = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -10,6 +11,7 @@ export const runSchema = z.object({
   delivery: z.enum(['not_attempted', 'attempting']), revision: seq, text: z.string(),
   errorCode: z.string().nullable(), stopReason: z.string().nullable(), createdAt: z.string(), storageAvailable: z.boolean(),
   model: z.string().nullable().default(null), reasoningEffort: z.string().nullable().default(null), modelConfirmed: z.number().int().min(0).max(1).default(0),
+  tools: z.array(fileApprovalSchema).max(4).default([]),
 });
 const sessionSchema = z.object({
   sessionId: id, workspaceId: id, title: z.string(), seq, createdAt: z.string(),
@@ -36,7 +38,7 @@ const results = {
   'sessions.get': sessionSchema,
   'sessions.list': z.object({ sessions: z.array(sessionSchema), nextAfter: seq.nullable() }),
   'messages.list': z.object({ messages: z.array(messageSchema), upTo: seq, nextAfter: seq.nullable() }),
-  'runs.start': runReceipt, 'runs.cancel': runReceipt,
+  'runs.start': runReceipt, 'runs.cancel': runReceipt, 'permissions.respond': runReceipt,
   'runs.get': runSchema, 'runs.watch': runSchema, 'runs.unwatch': runSchema,
   'requests.get': z.discriminatedUnion('found', [
     z.object({ storeEpoch: id, found: z.literal(false) }),
@@ -53,6 +55,7 @@ type Params = {
   'messages.list': { sessionId: string; after?: number; upTo?: number; limit?: number };
   'runs.start': { sessionId: string; text: string };
   'runs.cancel': { runId: string };
+  'permissions.respond': { runId: string; toolId: string; decision: 'allow' | 'reject' };
   'runs.get': { runId: string }; 'runs.watch': { runId: string }; 'runs.unwatch': { runId: string };
   'requests.get': { workspaceId: string; requestId: string; storeEpoch: string };
 };

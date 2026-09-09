@@ -27,6 +27,34 @@ function configuration(sessionId) {
   ] };
 }
 const tasks = new Map();
+const fileServers = new Map();
+const configuredFiles = config.mcp_servers?.worknaru_files;
+const fileServer = configuredFiles && { command: configuredFiles.command, args: configuredFiles.args, env: Object.entries(configuredFiles.env).map(([name, value]) => ({ name, value })) };
+async function filePrompt(sessionId, promptId, text) {
+  const server = fileServers.get(sessionId);
+  const child = spawn(server.command, server.args, { cwd: process.cwd(), env: { ...process.env, ...Object.fromEntries(server.env.map(({ name, value }) => [name, value])) }, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
+  log({ type: 'file-bridge', pid: child.pid });
+  let serial = 0;
+  const pending = new Map();
+  createInterface({ input: child.stdout }).on('line', (line) => { const message = JSON.parse(line); const waiter = pending.get(message.id); pending.delete(message.id); waiter?.(message.result); });
+  const call = (method, params) => new Promise((resolve) => { const id = ++serial; pending.set(id, resolve); child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n'); });
+  try {
+    await call('initialize', {});
+    const path = text.startsWith('edit:') ? text.slice(5) : 'sample.txt';
+    const read = await call('tools/call', { name: 'read_text_file', arguments: { path } });
+    let response = read;
+    if (!read.isError) {
+      const before = JSON.parse(read.content[0].text).text;
+      send({ method: 'session/update', params: { sessionId, update: { sessionUpdate: 'tool_call', toolCallId: 'file-call', title: 'mcp.worknaru_files.edit_text_file', kind: 'execute', status: 'in_progress', rawInput: { server: 'worknaru_files', tool: 'edit_text_file' } } } });
+      response = await call('tools/call', { name: 'edit_text_file', arguments: { path, before, after: '수정된 내용\n' } });
+      send({ method: 'session/update', params: { sessionId, update: { sessionUpdate: 'tool_call_update', toolCallId: 'file-call', status: 'completed' } } });
+    }
+    log({ type: 'file-result', result: response });
+    send({ method: 'session/update', params: { sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: response.content[0].text } } } });
+    writeFileSync(sessionFile(sessionId), JSON.stringify(sessions.get(sessionId)));
+    reply(promptId, { stopReason: 'end_turn' });
+  } finally { child.stdin.end(); }
+}
 const reply = (id, result) => send({ id, result });
 const sessionFile = (sessionId) => join(dirname(process.env.TEST_AGENT_LOG), `session-${sessionId}.json`);
 const resumeMode = process.env.TEST_AGENT_RESUME ?? 'resume';
@@ -47,6 +75,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   if (method === 'session/new') {
     const sessionId = randomUUID();
     sessions.set(sessionId, []);
+    fileServers.set(sessionId, fileServer);
     selections.set(sessionId, initialSelection());
     writeFileSync(sessionFile(sessionId), '[]');
     log({ type: 'new', sessionId });
@@ -59,6 +88,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       if (resumeMode === 'fail') throw new Error('Synthetic resume failure');
       const history = JSON.parse(readFileSync(sessionFile(params.sessionId), 'utf8'));
       sessions.set(params.sessionId, history);
+      fileServers.set(params.sessionId, fileServer);
       selections.set(params.sessionId, initialSelection());
       if (method === 'session/load') {
         for (const [index, text] of history.entries()) {
@@ -83,6 +113,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     const history = sessions.get(params.sessionId);
     history.push(text);
     log({ type: 'prompt', text, sessionId: params.sessionId, selection: selections.get(params.sessionId) });
+    if (text === 'edit-file' || text.startsWith('edit:')) { void filePrompt(params.sessionId, id, text).catch(() => reply(id, { stopReason: 'cancelled' })); return; }
     if (text === 'crash') { process.exit(42); }
     if (text === 'malformed') { process.stdout.write('x'.repeat(600_000)); return; }
     if (text === 'tool') {

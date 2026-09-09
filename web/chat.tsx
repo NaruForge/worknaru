@@ -3,9 +3,10 @@ import type { ChatState, ChatStateStore } from '../src/chat-state.js';
 import type { Run, Session } from '../src/web-client.js';
 import { Icon } from './icons.js';
 import { AiControls } from './ai-controls.js';
+import { FileToolHistory } from './file-approval.js';
 
 const active = (run?: Run) => run && ['running', 'cancelling'].includes(run.state);
-const runLabel = (run?: Run) => !run ? '새 대화' : ({ running: '응답 중', cancelling: '중지 중', completed: '응답 완료', cancelled: '중지 완료', failed: '응답 실패' })[run.state];
+const runLabel = (run?: Run) => !run ? '새 대화' : run.tools.some((tool) => tool.state === 'pending') ? '파일 수정 승인 대기' : ({ running: '응답 중', cancelling: '중지 중', completed: '응답 완료', cancelled: '중지 완료', failed: '응답 실패' })[run.state];
 const currentRun = (state: ChatState, session?: Session) => session?.latestRunId ? state.runs[session.latestRunId] : undefined;
 
 export function ConversationList({ state, model, select }: { state: ChatState; model: ChatStateStore; select: (id: string) => void }) {
@@ -77,10 +78,11 @@ export function Chat({ state, model, reconnect }: { state: ChatState; model: Cha
         {messages.map((message) => {
           const messageRun = message.runId ? state.runs[message.runId] : undefined;
           const text = message.role === 'assistant' && messageRun ? messageRun.text : message.text;
-          return <article key={message.messageId} className={`message ${message.role}`} aria-label={message.role === 'user' ? '내 메시지' : 'AI 메시지'}><div className="message-author">{message.role === 'user' ? '나' : <><span className="spark">✦</span>AI</>}</div><div className="message-text">{text || (active(messageRun) ? '응답을 기다리고 있습니다…' : '저장된 응답 내용이 없습니다.')}</div>{message.role === 'assistant' && messageRun && <div className="message-note">{runLabel(messageRun)}</div>}</article>;
+          return <article key={message.messageId} className={`message ${message.role}`} aria-label={message.role === 'user' ? '내 메시지' : 'AI 메시지'}><div className="message-author">{message.role === 'user' ? '나' : <><span className="spark">✦</span>AI</>}</div><div className="message-text">{text || (active(messageRun) ? '응답을 기다리고 있습니다…' : '저장된 응답 내용이 없습니다.')}</div>{message.role === 'assistant' && messageRun && <div className="message-note">{runLabel(messageRun)}</div>}{message.role === 'assistant' && messageRun && <FileToolHistory tools={messageRun.tools} />}</article>;
         })}
         {page?.nextAfter !== null && page?.nextAfter !== undefined && <button className="more-records" disabled={state.loading || state.connection !== 'online'} onClick={() => { stick.current = false; void model.moreMessages(); }}>다음 기록 불러오기</button>}
         {unlistedRun && <article className="message assistant"><div className="message-author"><span className="spark">✦</span>최근 응답</div>{page && page.nextAfter !== null && <p className="muted small">중간 대화는 ‘다음 기록 불러오기’로 확인할 수 있습니다.</p>}<div className="message-text">{run.text || (active(run) ? '응답을 기다리고 있습니다…' : '저장된 응답 내용이 없습니다.')}</div><div className="message-note">{runLabel(run)}</div></article>}
+        {unlistedRun && <FileToolHistory tools={run.tools} />}
       </div>
     </div>
     {newOutput && <button className="new-output" onClick={() => { stick.current = true; scroll.current!.scrollTop = scroll.current!.scrollHeight; setNewOutput(false); }}>최근 내용으로 이동 ↓</button>}
@@ -90,7 +92,7 @@ export function Chat({ state, model, reconnect }: { state: ChatState; model: Cha
           onChange={(event) => model.setDraft(event.target.value)} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
           onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && !composing.current && event.keyCode !== 229) { event.preventDefault(); if (!blocked && !tooLong) void model.send(); } }} />
         <AiControls info={state.aiInfo} selection={session} disabled={!!blocked || state.aiLoading === true} change={(selection) => { if (session) void model.configure(selection, session.sessionId); }} />
-        <div className="compose-controls"><span className="model-label">{state.ready?.aiExecution ? 'Permission · 텍스트 대화' : 'AI 연결 대기'}</span><span className="spacer" />
+        <div className="compose-controls"><span className="model-label">{state.ready?.capabilities.includes('permissions.respond') ? '파일 수정 · 요청마다 승인' : state.ready?.aiExecution ? 'Permission · 텍스트 대화' : 'AI 연결 대기'}</span><span className="spacer" />
           {active(run) ? <button className="primary" aria-label="응답 중지" disabled={state.connection !== 'online' || state.busy || !!state.pending || run?.state !== 'running' || run?.storageAvailable === false} onClick={() => void model.cancel()}><Icon name="stop" />중지</button>
             : <button className="primary" aria-label="메시지 전송" disabled={!!blocked || !session?.model || !session.reasoningEffort || tooLong || !draft.trim()} onClick={() => void model.send()}><Icon name="arrow" />전송</button>}
         </div>

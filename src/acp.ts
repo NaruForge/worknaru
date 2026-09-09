@@ -15,9 +15,10 @@ import { launchAgentJob, stopAgentJob, withTimeout } from './agent-process.js';
 import type { AgentCommand } from './agent-process.js';
 import { inspectCodex } from './codex-info.js';
 import type { AiInfo, AiSelection } from './ai-settings.js';
+import { FileTools } from './file-tools.js';
 
 type ModelConfiguration = { selection: AiSelection; models: string[]; efforts: string[] };
-type Agent = { process: Awaited<ReturnType<typeof launchAgentJob>>; connection: ClientConnection; providerId: string; activeRun?: string; configuration: ModelConfiguration };
+type Agent = { process: Awaited<ReturnType<typeof launchAgentJob>>; connection: ClientConnection; providerId: string; activeRun?: string; configuration: ModelConfiguration; fileCalls: Set<string> };
 export type AcpOptions = { codexPath?: string; command?: AgentCommand; requiredSelection?: AiSelection };
 
 function modelConfiguration(response: unknown): ModelConfiguration {
@@ -50,7 +51,7 @@ function codexCommand(projectRoot: string, directory: string, cwd: string, codex
     // This adapter's "read-only" mode name actually selects its approval preset.
     // Do not treat that name as a filesystem security guarantee.
     CODEX_CONFIG: JSON.stringify({ approval_policy: 'on-request', web_search: 'disabled',
-      developer_instructions: 'This is a text conversation. Answer using text only. Do not call tools, access files, execute commands, or delegate work.',
+      developer_instructions: 'Use text for conversation. For user-requested Workspace file work, use ONLY worknaru_files read_text_file and edit_text_file. Read the file, then propose the complete before and after text. The tool waits for the user to approve before applying. Respect rejection and cancellation. Never use native apply_patch, commands, other tools, apps, plugins, or delegation. Do not claim a file was changed unless the file tool reports completed.',
       features: { shell_tool: false, apps: false, plugins: false, multi_agent: false, browser_use: false, computer_use: false, skill_search: false, tool_suggest: false },
       tools: { view_image: false },
     }),
@@ -70,10 +71,12 @@ export class AcpRuntime {
   private info?: AiInfo;
   private inspecting?: Promise<AiInfo>;
   private requiredSelection?: AiSelection;
+  private readonly fileTools: FileTools;
 
   constructor(private store: RecordStore, projectRoot: string, directory: string, options: AcpOptions, private changed: (run: Run) => void) {
     this.command = options.command ?? codexCommand(projectRoot, directory, store.workspace.path, options.codexPath);
     this.requiredSelection = options.requiredSelection;
+    this.fileTools = new FileTools(store, directory, changed);
   }
 
   async recover() {
@@ -87,6 +90,7 @@ export class AcpRuntime {
       this.store.recoverSession(session.sessionId, confirmed);
     }
     this.store.recoverUndelivered();
+    this.store.recoverFiles();
   }
 
   start(runId: string) {
@@ -100,6 +104,10 @@ export class AcpRuntime {
   }
 
   emit(runId: string) { this.changed(this.store.run(runId)); }
+  respondPermission(runId: string, toolId: string) {
+    try { this.fileTools.respond(runId, toolId); }
+    catch (error) { void this.fail(runId, publicError(error).code); }
+  }
 
   metadata(): Promise<AiInfo> {
     if (this.stopping) return Promise.reject(new AppError('DAEMON_STOPPING', '데몬을 종료하고 있습니다.'));
@@ -146,9 +154,15 @@ export class AcpRuntime {
     // Keep the provider identity durable even if startup/resume is interrupted.
     this.store.setAgent(sessionId, jobName, binding.providerSessionId);
     const config = JSON.parse(this.command.env.CODEX_CONFIG ?? '{}') as Record<string, unknown>;
-    const command = { ...this.command, env: { ...this.command.env, CODEX_CONFIG: JSON.stringify({ ...config, model: selection.model, model_reasoning_effort: selection.reasoningEffort }) } };
-    const process = await launchAgentJob(jobName, command, signal);
     let agent: Agent | undefined;
+    const fileServer = await this.fileTools.bind(sessionId, () => agent?.activeRun);
+    const command = { ...this.command, env: { ...this.command.env, CODEX_CONFIG: JSON.stringify({ ...config, model: selection.model, model_reasoning_effort: selection.reasoningEffort,
+      // ACP's standard MCP descriptor cannot carry the Codex timeout/approval settings.
+      // Keep this configuration local to the conversation; metadata has no file tools.
+      mcp_servers: { worknaru_files: { command: fileServer.command, args: fileServer.args, env: Object.fromEntries(fileServer.env.map(({ name, value }) => [name, value])), tool_timeout_sec: 360,
+        tools: { read_text_file: { approval_mode: 'approve' }, edit_text_file: { approval_mode: 'approve' } } } },
+    }) } };
+    const process = await launchAgentJob(jobName, command, signal).catch((error) => { this.fileTools.unbind(sessionId); throw error; });
     // Bound incomplete NDJSON frames before the SDK buffers/parses them.
     let frameBytes = 0;
     const bounded = new Transform({ transform(chunk: Buffer, _encoding, callback) {
@@ -169,6 +183,10 @@ export class AcpRuntime {
         if (!agent?.activeRun || params.sessionId !== agent.providerId) return;
         const update = params.update;
         if (update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'tool_call_update') {
+          // The dedicated MCP tool owns its durable preview, approval and file result.
+          // ACP also emits presentation events; never interpret those as permission.
+          if (update.rawInput && typeof update.rawInput === 'object' && 'server' in update.rawInput && update.rawInput.server === 'worknaru_files') { agent.fileCalls.add(update.toolCallId); return; }
+          if (agent.fileCalls.has(update.toolCallId) && !update.rawInput) return;
           void this.fail(agent.activeRun, 'TOOLS_UNSUPPORTED'); return;
         }
         if (update.sessionUpdate !== 'agent_message_chunk') return;
@@ -181,6 +199,8 @@ export class AcpRuntime {
     void process.exited.then(() => {
       connection.close();
       if (this.agents.get(sessionId)?.process !== process) return;
+      this.fileTools.unbind(sessionId);
+      if (agent?.activeRun) { try { this.fileTools.cancel(agent.activeRun); } catch {} }
       this.agents.delete(sessionId);
       try { this.store.disconnectAgent(sessionId); } catch { /* Storage failure already blocks new writes. */ }
     });
@@ -202,16 +222,17 @@ export class AcpRuntime {
           throw new AppError('SESSION_RESUME_FAILED', '기존 AI 대화를 불러오지 못했습니다. 저장된 기록은 유지됩니다.');
         }
       } else {
-        const session = await withTimeout(connection.agent.request('session/new', { cwd: this.store.workspace.path, mcpServers: [] }), 30_000);
-        providerId = session.sessionId;
+        const session = await withTimeout(connection.agent.request('session/new', params), 30_000);
+        providerId = z.object({ sessionId: z.string() }).parse(session).sessionId;
         configuration = modelConfiguration(session);
       }
       signal.throwIfAborted();
       this.store.setAgent(sessionId, jobName, providerId);
-      agent = { process, connection, providerId, configuration };
+      agent = { process, connection, providerId, configuration, fileCalls: new Set() };
       this.agents.set(sessionId, agent);
       return agent;
     } catch (error) {
+      this.fileTools.unbind(sessionId);
       connection.close();
       await process.stop();
       throw error;
@@ -237,11 +258,13 @@ export class AcpRuntime {
       const text = this.store.claimRun(runId);
       if (text === null) return;
       agent.activeRun = runId;
+      agent.fileCalls.clear();
       this.emit(runId);
-      const response = await withTimeout(agent.connection.agent.request('session/prompt', {
+      const response = await this.promptTimeout(runId, agent.connection.agent.request('session/prompt', {
         sessionId: agent.providerId, prompt: [{ type: 'text', text }],
-      }), 120_000);
+      }));
       if (this.cancellations.has(runId)) { await this.cancellations.get(runId); return; }
+      if (this.fileTools.waiting(runId)) throw new AppError('TOOL_INCOMPLETE', '파일 승인 요청이 끝나기 전에 에이전트 응답이 종료되었습니다.');
       const state = response.stopReason === 'end_turn' ? 'completed' : response.stopReason === 'cancelled' ? 'cancelled' : 'failed';
       this.changed(this.store.finishRun(runId, state, state === 'failed' ? 'AGENT_STOPPED' : null, response.stopReason));
     } catch (error) {
@@ -254,6 +277,7 @@ export class AcpRuntime {
   }
 
   private async stopSession(sessionId: string) {
+    this.fileTools.unbind(sessionId);
     let storageError: unknown;
     try { this.store.disconnectAgent(sessionId); } catch (error) { storageError = error; }
     const opening = this.opening.get(sessionId);
@@ -279,6 +303,7 @@ export class AcpRuntime {
       try {
         const run = this.store.run(runId);
         if (isFinal(run)) return;
+        this.fileTools.cancel(runId);
         const confirmed = await this.stopSession(run.sessionId);
         if (confirmed) this.changed(this.store.finishRun(runId, 'failed', code));
         else this.changed(this.store.blockRun(runId));
@@ -298,6 +323,7 @@ export class AcpRuntime {
     const operation = (async () => {
       const run = this.store.run(runId);
       if (isFinal(run)) return;
+      this.fileTools.cancel(runId);
       const agent = this.agents.get(run.sessionId);
       if (agent?.activeRun === runId) {
         await withTimeout(agent.connection.agent.notify('session/cancel', { sessionId: agent.providerId }), 1_000).catch(() => {});
@@ -324,6 +350,22 @@ export class AcpRuntime {
       if (!await this.stopSession(sessionId).catch(() => false)) confirmed = false;
     }
     // A cancelled Run or a metadata probe may retain an unconfirmed owned Job.
+    await this.fileTools.close();
     return confirmed && !this.store.probeJob() && this.store.activeRunCount() === 0;
+  }
+
+  private async promptTimeout<T>(runId: string, promise: Promise<T>): Promise<T> {
+    let activeMs = 0;
+    let last = Date.now();
+    let timer: ReturnType<typeof setInterval>;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setInterval(() => {
+        const now = Date.now();
+        if (!this.fileTools.waiting(runId)) activeMs += now - last;
+        last = now;
+        if (activeMs >= 120_000) reject(new AppError('AGENT_TIMEOUT', 'AI 응답 대기 시간이 지났습니다.'));
+      }, 250);
+    });
+    try { return await Promise.race([promise, deadline]); } finally { clearInterval(timer!); }
   }
 }
