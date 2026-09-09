@@ -218,7 +218,7 @@ Windows 감독 프로세스가 이름이 있는 Job Object를 만들고, 에이�
 
 `sessions.get`의 `aiUnavailable: 0`은 새 실행을 접수할 수 있다는 뜻이며 재개 성공 보장은 아니다. `runs.start`의 접수 결과와 실제 재개·질문 실행을 구분한다. 재개 미지원은 `SESSION_RESUME_UNSUPPORTED`, 재개 거절·프로바이더 기록 없음은 `SESSION_RESUME_FAILED`, 30초 초과는 `SESSION_RESUME_TIMEOUT`으로 실패한다. 이때 새 질문의 `delivery`는 `not_attempted`이고 입력·빈 답변·실패 Run 및 기존 기록이 보존된다. UI는 재개 실패를 안내하며 새 대화를 시작할 수 있다. 실패·취소 후 해당 대화는 `aiUnavailable: 1`과 `SESSION_UNAVAILABLE`로 추가 실행을 막으며 재시작만으로 실패한 질문을 재시도하지 않는다. 정리까지 확인하지 못하면 `PROCESS_CLEANUP_UNKNOWN`이 우선한다.
 
-ACP 비활성 상태에서도 기록은 조회할 수 있다. 프로세스 정리·재개 자격 확인은 `--acp` 재시작에서 수행한다. 프로바이더 기록은 개발 데이터의 `codex` 하위에 있으므로 SQLite 파일만 복사해서는 맥락 재개를 보장하지 않는다. 현재 저장 형식은 설정 필드를 추가한 v3이며, 이전 대화의 모델 선택과 migration은 아래 Settings 절을 따른다. 관련 작업: [#12 재실행 후 대화 이어가기](https://github.com/NaruForge/worknaru/issues/12).
+ACP 비활성 상태에서도 기록은 조회할 수 있다. 프로세스 정리·재개 자격 확인은 `--acp` 재시작에서 수행한다. 프로바이더 기록은 개발 데이터의 `codex` 하위에 있으므로 SQLite 파일만 복사해서는 맥락 재개를 보장하지 않는다. 현재 저장 형식은 파일 승인 기록을 추가한 v4다. 파일 승인 migration은 아래 파일 수정 절을, 이전 대화의 모델 선택과 v3 변경은 Settings 절을 따른다. 관련 작업: [#12 재실행 후 대화 이어가기](https://github.com/NaruForge/worknaru/issues/12).
 
 ### 현재 한도와 검증 범위
 

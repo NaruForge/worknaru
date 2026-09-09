@@ -190,6 +190,38 @@ test('file approval restores after reload, shows the preview, and another tab se
   await expect(other.locator('.file-history')).toContainText('파일 수정 완료');
 });
 
+test('tail refresh includes file history when another client completes multiple runs between polls', async ({ page, daemon, records }) => {
+  writeFileSync(join(records.workspace, 'sample.txt'), '원래 내용\n');
+  let hold = false;
+  const queued = [];
+  await page.routeWebSocket(daemon.url, (socket) => {
+    const server = socket.connectToServer();
+    socket.onMessage((text) => {
+      if (hold && JSON.parse(text).method === 'sessions.get') queued.push(() => server.send(text));
+      else server.send(text);
+    });
+  });
+  await login(page, daemon, records); await newSession(page);
+  const other = await connect(records, daemon);
+  const session = (await other.call('sessions.list', { workspaceId: daemon.workspace.workspaceId })).result.sessions[0];
+  hold = true;
+  await expect.poll(() => queued.length).toBeGreaterThan(0);
+  const first = (await other.call('runs.start', { sessionId: session.sessionId, text: 'edit-file' }, mutation(other))).result.run;
+  let pending;
+  await expect.poll(async () => { pending = (await other.call('runs.get', { runId: first.runId })).result; return pending.tools[0]?.state; }).toBe('pending');
+  expect((await other.call('permissions.respond', { runId: first.runId, toolId: pending.tools[0].toolId, decision: 'allow' }, mutation(other))).ok).toBe(true);
+  await expect.poll(async () => (await other.call('runs.get', { runId: first.runId })).result.state).toBe('completed');
+  const second = (await other.call('runs.start', { sessionId: session.sessionId, text: '후속 대화' }, mutation(other))).result.run;
+  await expect.poll(async () => (await other.call('runs.get', { runId: second.runId })).result.state).toBe('completed');
+  hold = false;
+  for (const send of queued.splice(0)) send();
+  await expect(page.getByRole('article', { name: 'AI 메시지' })).toHaveCount(2);
+  const history = page.getByRole('article', { name: 'AI 메시지' }).first().locator('.file-history');
+  await expect(history).toContainText('파일 수정 완료');
+  await history.locator('summary').click();
+  await expect(history.locator('.file-versions section').last()).toContainText('수정된 내용');
+});
+
 test('rejection and stop in the common approval dialog preserve the original file', async ({ page, daemon, records }) => {
   const file = join(records.workspace, 'sample.txt'); writeFileSync(file, '원래 내용\n');
   await login(page, daemon, records);

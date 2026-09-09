@@ -185,7 +185,10 @@ export class ChatStateStore {
     const version = this.selection;
     const tail = await this.client.call('messages.list', { sessionId, after: page.upTo, limit: 50 });
     if (version !== this.selection || this.state.pages[sessionId] !== page) return;
-    if (tail.messages.length) this.update({ pages: { ...this.state.pages, [sessionId]: { ...tail, messages: [...page.messages, ...tail.messages] } } });
+    if (tail.messages.length) {
+      this.update({ pages: { ...this.state.pages, [sessionId]: { ...tail, messages: [...page.messages, ...tail.messages] } } });
+      await this.loadRunHistory(tail);
+    }
   }
 
   private savePending(pending?: Pending) {
