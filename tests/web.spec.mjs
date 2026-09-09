@@ -151,29 +151,66 @@ async function login(page, daemon, records) {
   await expect(page.getByRole('button', { name: '연결됨', exact: true })).toBeVisible();
 }
 async function newSession(page) {
+  const back = page.getByRole('button', { name: '← 대화 목록', exact: true });
+  if (await back.isVisible()) await back.click();
   await page.getByRole('button', { name: '새 대화', exact: true }).click();
   await expect(page.getByRole('textbox', { name: '메시지', exact: true })).toBeEnabled();
-  await expect(page.getByRole('button', { name: '새 대화', exact: true })).toBeEnabled();
+  await expect(page.locator('.new-chat')).toBeEnabled();
 }
 async function send(page, text) {
   await page.getByRole('textbox', { name: '메시지', exact: true }).fill(text);
   await page.getByRole('button', { name: '메시지 전송' }).click();
 }
 
+test('personal appearance survives reload while preview cancellation preserves the Chat draft', async ({ page, context, records }) => {
+  // Appearance and draft persistence require no AI process.
+  const daemon = await launch(records, { extraArgs: ['--origin', origin] });
+  await login(page, daemon, records);
+  await newSession(page);
+  await page.getByRole('textbox', { name: '메시지', exact: true }).fill('배색을 바꿔도 유지할 초안');
+  const accent = () => page.locator('html').evaluate(element => element.style.getPropertyValue('--accent-background'));
+  const initial = await accent();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await expect(page.getByRole('complementary', { name: '설정 메뉴' })).toBeVisible();
+  await expect(page.getByRole('complementary', { name: '대화 목록' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '대화 목록 열기 또는 접기' })).toHaveCount(0);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  const input = page.getByRole('textbox', { name: 'Main Color HEX' });
+  await input.fill('#4361ee');
+  await expect.poll(accent).not.toBe(initial);
+  await page.getByRole('button', { name: 'Chat으로 돌아가기' }).click();
+  await expect.poll(accent).toBe(initial);
+  await expect(page.getByRole('textbox', { name: '메시지', exact: true })).toHaveValue('배색을 바꿔도 유지할 초안');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await input.fill('#4361ee');
+  await page.getByRole('button', { name: '배색 적용', exact: true }).click();
+  await expect(page.getByText('이 브라우저에 배색을 저장했습니다.', { exact: true })).toBeVisible();
+  const applied = await accent();
+  const other = await context.newPage();
+  await other.goto(origin);
+  await expect.poll(() => other.locator('html').evaluate(element => element.style.getPropertyValue('--accent-background'))).toBe(applied);
+  await page.reload();
+  await expect.poll(accent).toBe(applied);
+  const storage = await page.evaluate(() => ({ ...localStorage }));
+  expect(JSON.parse(storage['worknaru.appearance.v1'])).toEqual({ version: 1, mainColor: '#4361ee' });
+  expect(JSON.stringify(storage)).not.toContain(records.token);
+  await other.close();
+});
+
 test('file approval restores after reload, shows the preview, and another tab sees the single result', async ({ page, context, daemon, records }) => {
   const file = join(records.workspace, 'sample.txt'); writeFileSync(file, '원래 내용\n');
   await login(page, daemon, records); await newSession(page); await send(page, 'edit-file');
-  const dialog = page.getByRole('dialog', { name: '파일 수정 승인' });
-  await expect(dialog).toBeVisible();
+  const dialog = page.locator('.file-approval');
+  await expect(dialog).toBeVisible(); await dialog.locator('summary').click();
   await expect(dialog.locator('.file-versions section').first()).toContainText('원래 내용');
   await expect(dialog.locator('.file-versions section').last()).toContainText('수정된 내용');
   expect(readFileSync(file, 'utf8')).toBe('원래 내용\n');
-  await dialog.getByRole('button', { name: '파일 수정 승인 닫기' }).click();
+  await dialog.locator('summary').click();
   expect(readFileSync(file, 'utf8')).toBe('원래 내용\n');
-  await page.getByRole('button', { name: '파일 수정 승인 1' }).click(); await expect(dialog).toBeVisible();
-  await login(page, daemon, records); await expect(dialog).toBeVisible();
+  await dialog.locator('summary').click(); await expect(dialog).toBeVisible();
+  await login(page, daemon, records); await expect(dialog).toBeVisible(); await dialog.locator('summary').click();
   const other = await context.newPage(); await login(other, daemon, records);
-  const otherDialog = other.getByRole('dialog', { name: '파일 수정 승인' }); await expect(otherDialog).toBeVisible();
+  const otherDialog = other.locator('.file-approval'); await expect(otherDialog).toBeVisible(); await otherDialog.locator('summary').click();
   await page.setViewportSize({ width: 320, height: 850 });
   expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
   await page.screenshot({ path: '.worknaru-test/file-approval-mobile.png' });
@@ -183,7 +220,7 @@ test('file approval restores after reload, shows the preview, and another tab se
   await expect(otherDialog.getByRole('button', { name: '이번 수정 허용' })).toHaveCount(0);
   expect(readFileSync(file, 'utf8')).toBe('수정된 내용\n');
   await other.screenshot({ path: '.worknaru-test/file-approval-desktop.png' });
-  await otherDialog.getByRole('button', { name: '파일 수정 승인 닫기' }).click();
+  await otherDialog.locator('summary').click();
   await expect(other.locator('.run-state')).toHaveText('응답 완료');
   await send(other, '후속 대화'); await expect(other.locator('.run-state')).toHaveText('응답 완료');
   await login(other, daemon, records);
@@ -222,15 +259,15 @@ test('tail refresh includes file history when another client completes multiple 
   await expect(history.locator('.file-versions section').last()).toContainText('수정된 내용');
 });
 
-test('rejection and stop in the common approval dialog preserve the original file', async ({ page, daemon, records }) => {
+test('rejection and stop in the inline approval panel preserve the original file', async ({ page, daemon, records }) => {
   const file = join(records.workspace, 'sample.txt'); writeFileSync(file, '원래 내용\n');
   await login(page, daemon, records);
   for (const action of ['거절', '실행 중지']) {
     await newSession(page); await send(page, 'edit-file');
-    const dialog = page.getByRole('dialog', { name: '파일 수정 승인' }); await expect(dialog).toBeVisible();
+    const dialog = page.locator('.file-approval'); await expect(dialog).toBeVisible(); await dialog.locator('summary').click();
     await dialog.getByRole('button', { name: action, exact: true }).click();
     await expect(dialog.getByRole('status', { name: '파일 수정 상태' })).toContainText(action === '거절' ? '거절됨' : '취소됨');
-    await dialog.getByRole('button', { name: '파일 수정 승인 닫기' }).click();
+    await dialog.locator('summary').click();
     await expect(page.locator('.run-state')).toHaveText(action === '거절' ? '응답 완료' : '중지 완료');
     expect(readFileSync(file, 'utf8')).toBe('원래 내용\n');
   }
@@ -245,7 +282,8 @@ test('lost permission response is queried after reload and never repeats the edi
     server.onMessage((text) => { const value = JSON.parse(text); if (drop && permissionCall && value.type === 'response' && value.callId === permissionCall) { drop = false; socket.close(); server.close(); } else socket.send(text); });
   });
   await login(page, daemon, records); await newSession(page); await send(page, 'edit-file');
-  await page.getByRole('dialog', { name: '파일 수정 승인' }).getByRole('button', { name: '이번 수정 허용' }).click();
+  await page.locator('.file-approval summary').click();
+  await page.locator('.file-approval').getByRole('button', { name: '이번 수정 허용' }).click();
   await expect(page.getByRole('button', { name: '연결 끊김', exact: true })).toBeVisible();
   await login(page, daemon, records); await expect(page.locator('.run-state')).toHaveText('응답 완료');
   await expect(page.locator('.file-history')).toContainText('파일 수정 완료');
@@ -257,15 +295,15 @@ test('lost permission response is queried after reload and never repeats the edi
 test('approval of another conversation stays current while viewing a different chat', async ({ page, daemon, records }) => {
   const file = join(records.workspace, 'sample.txt'); writeFileSync(file, '원래 내용\n');
   await login(page, daemon, records); await newSession(page); await send(page, 'edit-file');
-  const dialog = page.getByRole('dialog', { name: '파일 수정 승인' }); await expect(dialog).toBeVisible();
-  await dialog.getByRole('button', { name: '파일 수정 승인 닫기' }).click(); await newSession(page);
+  const dialog = page.locator('.file-approval'); await expect(dialog).toBeVisible(); await dialog.locator('summary').click();
+  await dialog.locator('summary').click(); await newSession(page);
   await expect(page.getByRole('heading', { name: '새 대화 2' })).toBeVisible();
-  await page.getByRole('button', { name: '파일 수정 승인 1' }).click();
+  await dialog.locator('summary').click();
   await dialog.getByRole('button', { name: '이번 수정 허용' }).click();
   await expect(dialog.getByRole('status', { name: '파일 수정 상태' })).toHaveText('파일 수정 완료');
-  await dialog.getByRole('button', { name: '파일 수정 승인 닫기' }).click();
+  await dialog.locator('summary').click();
   expect(readFileSync(file, 'utf8')).toBe('수정된 내용\n');
-  await expect(page.getByRole('button', { name: '파일 수정 승인 1' })).toHaveCount(0);
+  await expect(page.locator('.file-approval')).toHaveCount(0);
   await page.locator('.conversation-list button').filter({ hasText: '새 대화 1' }).click();
   await expect(page.locator('.file-history')).toContainText('파일 수정 완료');
 });
@@ -303,23 +341,19 @@ test('actual daemon text flow, drafts, IME, cancellation and responsive modal fo
   await page.screenshot({ path: '.worknaru-test/chat-desktop.png' });
   for (const width of [736, 390, 320]) {
     await page.setViewportSize({ width, height: 850 });
-    const toggle = page.getByRole('button', { name: '대화 목록 열기 또는 접기' });
-    await toggle.click();
-    await expect(page.getByRole('dialog', { name: '대화 목록' })).toBeVisible();
-    for (let i = 0; i < 9; i++) await page.keyboard.press('Tab');
-    expect(await page.evaluate(() => !!document.activeElement.closest('dialog'))).toBe(true);
-    await page.keyboard.press('Escape');
-    await expect(toggle).toBeFocused();
-    if (width < 600) {
-      await page.getByRole('button', { name: '서비스 열기' }).click();
-      await expect(page.getByRole('dialog', { name: '서비스', exact: true })).toBeVisible();
-      await page.keyboard.press('Escape');
-    }
+    const back = page.getByRole('button', { name: '← 대화 목록', exact: true });
+    await back.click();
+    await expect(page.locator('.stacked-list')).toBeVisible();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await page.locator('.conversation-list [aria-current=true]').click();
+    await expect(input).toHaveValue('응답 중 작성한 다음 질문');
+    expect((await back.boundingBox()).height).toBeGreaterThanOrEqual(44);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   }
   await page.getByRole('button', { name: '어두운 테마' }).click();
   await expect(page.locator('html')).toHaveCSS('color-scheme', 'dark');
-  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(28, 36, 37)');
+  // User-selected A palette: default Main Color, dark canvas.
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(20, 23, 22)');
   await page.screenshot({ path: '.worknaru-test/chat-mobile-dark.png' });
   expect(errors).toEqual([]);
   const storage = await page.evaluate(() => ({ session: { ...sessionStorage }, local: { ...localStorage }, url: location.href }));
@@ -443,7 +477,8 @@ test('Settings defaults and per-conversation choices remain separate, persist on
   await expect(page.getByLabel('Model', { exact: true })).toBeEnabled({ timeout: 15_000 });
   await page.getByRole('textbox', { name: '메시지', exact: true }).fill('설정 중에도 유지할 초안');
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+  await page.getByRole('navigation', { name: '설정 메뉴', exact: true }).getByRole('button', { name: 'AI', exact: true }).click();
+  const settings = page.getByRole('region', { name: '설정', exact: true });
   await expect(settings.getByText('ChatGPT 로그인 정보 확인됨')).toBeVisible();
   await expect(settings).not.toContainText('private-not-for-ui');
   await settings.getByLabel('기본 Model', { exact: true }).selectOption('gpt-5.6-sol');
@@ -451,7 +486,7 @@ test('Settings defaults and per-conversation choices remain separate, persist on
   await settings.getByLabel('기본 Reasoning Effort', { exact: true }).selectOption('high');
   await expect(settings.getByLabel('기본 Reasoning Effort', { exact: true })).toHaveValue('high');
   await page.screenshot({ path: '.worknaru-test/settings-desktop.png' });
-  await settings.getByRole('button', { name: 'Settings 닫기' }).click();
+  await settings.getByRole('button', { name: 'Chat으로 돌아가기' }).click();
   await expect(page.getByLabel('Model', { exact: true })).toHaveValue('gpt-5.6-luna');
   await expect(page.getByRole('textbox', { name: '메시지', exact: true })).toHaveValue('설정 중에도 유지할 초안');
   await newSession(page);
@@ -478,15 +513,21 @@ test('Settings defaults and per-conversation choices remain separate, persist on
   await expect(page.locator('.run-state')).toHaveText('응답 완료');
   await expect(page.getByRole('article', { name: 'AI 메시지' }).last()).toContainText('답변 3: 설정 뒤에도 같은 맥락');
   await page.setViewportSize({ width: 320, height: 850 });
-  await page.getByRole('button', { name: '서비스 열기' }).click();
-  await page.getByRole('dialog', { name: '서비스', exact: true }).getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: '← 대화 목록', exact: true }).click();
+  await page.getByRole('button', { name: '← Module', exact: true }).click();
+  await page.getByRole('region', { name: 'Module 선택' }).getByRole('button', { name: /설정/ }).click();
+  await page.getByRole('navigation', { name: '설정 메뉴', exact: true }).getByRole('button', { name: 'AI', exact: true }).click();
   await expect(settings.getByLabel('기본 Model', { exact: true })).toHaveValue('gpt-5.6-sol');
   await expect(settings.getByLabel('기본 Reasoning Effort', { exact: true })).toHaveValue('high');
   for (let i = 0; i < 10; i++) await page.keyboard.press('Tab');
-  expect(await page.evaluate(() => !!document.activeElement.closest('dialog'))).toBe(true);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByRole('complementary')).toHaveCount(0);
   expect(await settings.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
   await page.screenshot({ path: '.worknaru-test/settings-mobile.png' });
-  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: '← 설정 메뉴', exact: true }).click();
+  await page.getByRole('button', { name: '← Module', exact: true }).click();
+  await page.getByRole('region', { name: 'Module 선택' }).getByRole('button', { name: /Chat/ }).click();
+  await page.locator('.conversation-list [aria-current=true]').click();
   await send(page, 'wait');
   await expect(page.getByLabel('Model', { exact: true })).toBeDisabled();
   await expect(page.getByLabel('Reasoning Effort', { exact: true })).toBeDisabled();
@@ -504,18 +545,20 @@ test('opening Settings and refreshing reads defaults changed by another client',
   const luna = { model: 'gpt-5.6-luna', reasoningEffort: 'low' };
   expect((await other.call('settings.update', { selection: sol }, mutation(other))).ok).toBe(true);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+  await page.getByRole('navigation', { name: '설정 메뉴', exact: true }).getByRole('button', { name: 'AI', exact: true }).click();
+  const settings = page.getByRole('region', { name: '설정', exact: true });
   await expect(settings.getByLabel('기본 Model', { exact: true })).toHaveValue(sol.model);
   await expect(settings.getByLabel('기본 Reasoning Effort', { exact: true })).toHaveValue('high');
   expect((await other.call('settings.update', { selection: luna }, mutation(other))).ok).toBe(true);
   await settings.getByRole('button', { name: '상태 새로고침', exact: true }).click();
   await expect(settings.getByLabel('기본 Model', { exact: true })).toHaveValue(luna.model);
   await expect(settings.getByLabel('기본 Reasoning Effort', { exact: true })).toHaveValue('low');
-  await settings.getByRole('button', { name: 'Settings 닫기' }).click();
+  await settings.getByRole('button', { name: 'Chat으로 돌아가기' }).click();
   expect((await other.call('settings.update', { selection: sol }, mutation(other))).ok).toBe(true);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('navigation', { name: '설정 메뉴', exact: true }).getByRole('button', { name: 'AI', exact: true }).click();
   await expect(settings.getByLabel('기본 Model', { exact: true })).toHaveValue(sol.model);
-  await settings.getByRole('button', { name: 'Settings 닫기' }).click();
+  await settings.getByRole('button', { name: 'Chat으로 돌아가기' }).click();
   await expect(page.getByLabel('Model', { exact: true })).toHaveValue(luna.model);
   await newSession(page);
   await expect(page.getByLabel('Model', { exact: true })).toHaveValue(sol.model);
@@ -538,13 +581,105 @@ test('a lost setting response is recovered after reload without creating a model
   });
   await login(page, daemon, records);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('navigation', { name: '설정 메뉴', exact: true }).getByRole('button', { name: 'AI', exact: true }).click();
   await expect(page.getByLabel('기본 Model', { exact: true })).toBeEnabled({ timeout: 15_000 });
   await page.getByLabel('기본 Model', { exact: true }).selectOption('gpt-5.6-sol');
   await expect(page.getByRole('button', { name: '연결 끊김', exact: true })).toBeVisible();
   await login(page, daemon, records);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('navigation', { name: '설정 메뉴', exact: true }).getByRole('button', { name: 'AI', exact: true }).click();
   await expect(page.getByLabel('기본 Model', { exact: true })).toHaveValue('gpt-5.6-sol');
   expect(await page.evaluate(() => sessionStorage.length)).toBe(0);
   const events = readFileSync(join(records.root, 'agent.log'), 'utf8').trim().split('\n').map(JSON.parse);
   expect(events.filter((event) => ['new', 'prompt'].includes(event.type))).toHaveLength(0);
+});
+
+
+test('mobile browser navigation preserves running work, drafts and settings menu choices', async ({page, daemon, records}) => {
+  await page.setViewportSize({width:390,height:850});
+  await login(page,daemon,records);
+  await expect(page.locator('.stacked-list')).toBeVisible();
+  await newSession(page);await send(page,'wait');
+  await expect(page.getByRole('button',{name:'응답 중지'})).toBeEnabled();
+  const draft=page.getByRole('textbox',{name:'메시지',exact:true});
+  await draft.fill('돌아와서 보낼 초안');
+  await page.getByRole('button',{name:'← 대화 목록'}).click();
+  await expect(page.locator('.stacked-list')).toBeVisible();
+  await expect(page.locator('.conversation-list [aria-current=true]')).toContainText('응답 중');
+  await page.goForward();await expect(draft).toHaveValue('돌아와서 보낼 초안');
+  await page.goBack();await expect(page.locator('.stacked-list')).toBeVisible();
+  await page.getByRole('button',{name:'← Module'}).click();
+  await page.getByRole('region',{name:'Module 선택'}).getByRole('button',{name:/설정/}).click();
+  await page.getByRole('navigation',{name:'설정 메뉴'}).getByRole('button',{name:'AI',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'AI 인증'})).toBeVisible();
+  await page.goBack();await expect(page.locator('.stacked-list')).toBeVisible();
+  await expect(page.getByRole('navigation',{name:'설정 메뉴'}).getByRole('button',{name:'AI',exact:true})).toHaveAttribute('aria-current','page');
+  await page.goBack();await expect(page.getByRole('region',{name:'Module 선택'})).toBeVisible();
+  await page.getByRole('region',{name:'Module 선택'}).getByRole('button',{name:/Chat/}).click();
+  await page.locator('.conversation-list [aria-current=true]').click();
+  await expect(draft).toHaveValue('돌아와서 보낼 초안');
+  await expect(page.getByRole('button',{name:'응답 중지'})).toBeEnabled();
+  const historyState=await page.evaluate(()=>JSON.stringify(history.state));
+  expect(historyState).not.toContain('돌아와서 보낼 초안');expect(historyState).not.toContain(records.token);
+  await page.getByRole('button',{name:'응답 중지'}).click();await expect(page.locator('.run-state')).toHaveText('중지 완료');
+  await page.reload();await login(page,daemon,records);
+  await expect(page.getByRole('button',{name:'← 대화 목록'})).toBeVisible();
+  await expect(page.locator('.run-state')).toHaveText('중지 완료');
+  await expect(draft).toHaveValue('');
+});
+
+test('Chat and Settings retain independent sidebar state and mobile list scroll', async ({page, records}) => {
+  const daemon=await launch(records,{extraArgs:['--origin',origin]});
+  await login(page,daemon,records);
+  const other=await connect(records,daemon);
+  for(let i=0;i<18;i++) await createSession(other,daemon.workspace.workspaceId,`목록 위치 ${i}`);
+  await login(page,daemon,records);
+  await page.getByRole('button',{name:'대화 목록 열기 또는 접기'}).click();
+  await expect(page.getByRole('complementary')).toHaveCount(0);
+  await page.getByRole('button',{name:'Settings',exact:true}).click();
+  await expect(page.getByRole('complementary',{name:'설정 메뉴'})).toBeVisible();
+  await page.getByRole('button',{name:'Chat',exact:true}).click();
+  await expect(page.getByRole('complementary')).toHaveCount(0);
+  await page.setViewportSize({width:390,height:850});
+  const list=page.locator('.conversation-list'), selected=list.getByRole('button').nth(10);
+  await selected.scrollIntoViewIfNeeded();const scroll=await list.evaluate(el=>el.scrollTop);
+  await selected.click();
+  await page.getByRole('textbox',{name:'메시지',exact:true}).fill('목록 스크롤과 함께 보존');
+  await page.getByRole('button',{name:'← 대화 목록'}).click();
+  await expect.poll(()=>list.evaluate(el=>el.scrollTop)).toBe(scroll);
+  await expect(selected).toHaveAttribute('aria-current','true');
+  await page.getByRole('button',{name:'← Module'}).click();
+  await page.getByRole('region',{name:'Module 선택'}).getByRole('button',{name:/설정/}).click();
+  await page.getByRole('button',{name:'← Module'}).click();
+  await page.getByRole('region',{name:'Module 선택'}).getByRole('button',{name:/Chat/}).click();
+  await expect.poll(()=>list.evaluate(el=>el.scrollTop)).toBe(scroll);
+  await selected.click();await expect(page.getByRole('textbox',{name:'메시지',exact:true})).toHaveValue('목록 스크롤과 함께 보존');
+});
+
+
+test('navigation history never selects a previous Workspace session after reconnecting elsewhere', async ({page,records}) => {
+  const first=await launch(records,{extraArgs:['--origin',origin]});
+  const firstClient=await connect(records,first), firstSession=await createSession(firstClient,first.workspace.workspaceId,'첫 Workspace 대화');
+  const secondRecords=fixture({after:action=>records.cleanups.push(action)});
+  const second=await launch(secondRecords,{extraArgs:['--origin',origin]});
+  const secondClient=await connect(secondRecords,second);
+  await createSession(secondClient,second.workspace.workspaceId,'다른 Workspace 대화');
+  const requested=[];
+  await page.routeWebSocket(second.url,socket=>{const server=socket.connectToServer();socket.onMessage(text=>{requested.push(JSON.parse(text));server.send(text);});});
+  await page.setViewportSize({width:390,height:850});
+  await login(page,first,records);await page.locator('.conversation-list button').filter({hasText:'첫 Workspace 대화'}).click();
+  await page.getByRole('textbox',{name:'메시지',exact:true}).fill('이 Workspace의 초안');
+  await page.getByRole('button',{name:'연결됨',exact:true}).click();
+  await page.getByRole('textbox',{name:'Daemon 주소'}).fill(second.url);
+  await page.getByRole('textbox',{name:'연결 키',exact:true}).fill(secondRecords.token);
+  await page.getByRole('dialog',{name:'Workspace 연결'}).getByRole('button',{name:'연결',exact:true}).click();
+  await expect(page.locator('.stacked-list')).toBeVisible();
+  await expect(page.locator('.conversation-list')).toContainText('다른 Workspace 대화');
+  await expect(page.locator('.conversation-list')).not.toContainText('첫 Workspace 대화');
+  await page.goBack();
+  await expect(page.locator('.stacked-list')).toBeVisible();
+  await expect(page.locator('.conversation-list')).toContainText('다른 Workspace 대화');
+  expect(requested.some(request=>request.method==='sessions.get' && request.params.sessionId===firstSession.sessionId)).toBe(false);
+  const snapshot=await page.evaluate(()=>JSON.stringify(history.state));
+  expect(snapshot).not.toContain(firstSession.sessionId);expect(snapshot).not.toContain(records.token);expect(snapshot).not.toContain(secondRecords.token);
 });
