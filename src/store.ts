@@ -386,6 +386,10 @@ export class RecordStore {
     });
   }
 
+  activeRunCount() {
+    return Number(this.db.prepare("SELECT COUNT(*) AS count FROM runs WHERE state IN ('running','cancelling')").get()!.count);
+  }
+
   recoverySessions() {
     // Inspect all workspaces: the same data directory can be reopened for a different one.
     return this.db.prepare('SELECT id AS sessionId, agent_job AS jobName FROM sessions WHERE agent_job IS NOT NULL').all() as { sessionId: string; jobName: string }[];

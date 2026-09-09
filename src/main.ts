@@ -24,7 +24,7 @@ try {
       url: daemon.url, workspace: daemon.workspace,
       storeEpoch: daemon.storeEpoch, daemonInstanceId: daemon.daemonInstanceId,
     } }));
-    const stop = () => { void daemon.close().catch(() => { process.exitCode = 1; }); };
+    const stop = () => { void daemon.close().then((confirmed) => { if (!confirmed) process.exitCode = 1; }, () => { process.exitCode = 1; }); };
     process.once('SIGINT', stop);
     process.once('SIGTERM', stop);
   }
