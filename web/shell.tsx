@@ -23,8 +23,9 @@ export function WorkspaceShell({ name, online, sidebar, children, connection, se
       <main className="main">{stacked ? <>
         {stacked.view === 'modules' ? <section className="module-picker" aria-label="Module 선택"><h1 tabIndex={-1}>Module</h1><Button onClick={chat}><Icon name="chat" /><span><strong>Chat</strong><span>대화 목록과 AI 작업</span></span><span aria-hidden="true">›</span></Button><Button onClick={settings}><Icon name="settings" /><span><strong>설정</strong><span>화면 · 연결 · AI</span></span><span aria-hidden="true">›</span></Button></section> : <div className="stacked-toolbar"><Button data-focus-fallback onClick={stacked.back}>{stacked.backLabel}</Button></div>}
         <section className="stacked-list" aria-label={sidebarLabel} hidden={stacked.view !== 'list'}>{stacked.list}</section>
-        <div className="stacked-main" hidden={stacked.view !== 'main'}>{children}</div>
-      </> : <><div className="module-tools">{toggleList && <IconButton onClick={toggleList} label={navigationLabel ?? '목록 열기 또는 접기'} aria-expanded={listOpen}><Icon name="list" /></IconButton>}<span>{sectionLabel}</span></div>{children}</>}</main>
+      </> : <div className="module-tools">{toggleList && <IconButton onClick={toggleList} label={navigationLabel ?? '목록 열기 또는 접기'} aria-expanded={listOpen}><Icon name="list" /></IconButton>}<span>{sectionLabel}</span></div>}
+        <div className="stacked-main" hidden={!!stacked && stacked.view !== 'main'}>{children}</div>
+      </main>
     </div>
   </div>;
 }
