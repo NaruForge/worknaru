@@ -27,11 +27,15 @@
     "test:files:live": "npm run build && node --test tests/files-live.mjs",
     "build:daemon": "tsc",
     "rpc": "node dist/rpc-client.js",
+    "test:runtime": "npm run build:daemon && node --test tests/paseo-runtime.test.mjs",
+    "test:live:paseo": "npm run build:daemon && node --test tests/paseo-live.mjs",
     "test:daemon": "npm run build:daemon && node --test tests/daemon.test.mjs tests/acp.test.mjs tests/settings.test.mjs tests/file-tools.test.mjs tests/web-client.test.mjs tests/rpc-client.test.mjs tests/cli.test.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/codex-acp": "1.10.0",
     "@agentclientprotocol/sdk": "1.4.0",
+    "@getpaseo/client": "0.8.0-beta.1",
+    "@getpaseo/server": "0.8.0-beta.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "ws": "8.21.3",
@@ -39,6 +43,7 @@
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
+    "@types/express": "4.17.25",
     "@types/node": "24.13.3",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.7",
