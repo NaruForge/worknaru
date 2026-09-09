@@ -1,5 +1,26 @@
 # 로컬 Daemon 개발과 저장 검증
 
+## Paseo 전환의 실행 기반
+
+[#35](https://github.com/NaruForge/worknaru/issues/35)의 첫 구현은 `@getpaseo/server`와 `@getpaseo/client` **0.8.0-beta.1**을 exact pin으로 사용한다. 전용 Node child가 Server root API로 기동하고 내부 DaemonClient 하나가 연결한다. Windows Job Object는 전용 Paseo 인스턴스 전체를 소유하며 Agent 실행은 Paseo가 관리한다. 아직 기존 기본 실행 경로를 전환하기 전의 검증 진입점이다.
+
+설치는 설치 script를 허용하는 `npm ci --cache .npm-cache`를 사용한다. 서버 배포물은 `node-pty`, speech native 패키지와 해당 플랫폼 의존성을 포함하며 root 타입 검사에는 `@types/express`도 필요하다. `--ignore-scripts` 설치를 실행 검증의 대체로 쓰지 않는다. 새 디렉터리의 표준 설치와 그 설치물의 실제 기동·Client 접속·종료를 확인했다.
+
+전용 데이터 영역은 빈 디렉터리에서 `worknaru-paseo-v1` 표식을 만들며 구형 자료가 있으면 열지 않는다. `paseo/`, `codex/`를 따로 사용하고 개인 Codex의 `auth.json`만 복사한다. 개인 설정·MCP·Plugin 구성은 가져오지 않는다. loopback 동적 포트와 실행별 인증을 사용하고 relay·Paseo Web UI·MCP/주입·Plugin·browser tools·terminal hooks·네 가지 speech 기능을 명시적으로 끈다. Codex는 `workspace-write / on-request`, network off·web search off·multi-agent off다. 일반 Workspace 수정은 매번 diff 승인을 제공하는 기능이 아니다.
+
+실제 AI 응답 테스트는 반드시 저비용 모델 **`gpt-5.6-luna / low`**를 사용한다. 첫 입력·후속 입력·취소·승인·재시도마다 지원 여부와 실제 적용값을 확인하며, 실패하면 질문을 보내지 않는다. 개인 기본값·화면 선택·자동 fallback으로 대체하지 않는다. 다른 모델 선택은 fake로 검사하며 자동 제목·브랜치명·요약 등 부가 AI 호출을 만들지 않는다. 시나리오·모델·추론·횟수·결과를 각 시험의 `verification.jsonl`에 기록한다.
+
+```powershell
+npm run test:runtime # 실제 배포 서버 기동·인증·소유권·종료, 모델 호출 없음
+$env:WORKNARU_LIVE = '1'
+$env:WORKNARU_CODEX_PATH = (Get-Command codex.exe).Source
+npm run test:live:paseo
+```
+
+실검증은 `.worknaru-test/paseo-live-<uuid>`의 임시 Workspace·새 데이터만 사용한다. 첫 응답·후속 응답·취소 총 3회이며 각 입력의 native turn 시작·종료 식별자를 확인한다. `idle` 또는 timeout을 성공/취소 증거로 쓰지 않는다. 2026-09-09 Windows `10.0.26200`, Node `24.18.0`, npm `11.14.1`, Codex CLI `0.153.4`에서 통과했다. 해당 환경의 executable은 `C:\Users\swBaek\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe`였다. 전용 runtime 종료와 개인 Paseo/Codex 설정·인증의 SHA-256 무변경을 함께 확인했다. Paseo/외부 Codex 버전 변경 시 이 시험과 뒤이어 제공하는 제품 흐름을 재검증한다.
+
+## 기존 기본 실행 경로
+
 이 문서는 현재 실행 가능한 ACP 구현의 명령과 동작을 설명한다. [ADR-0016](adr/0016-use-paseo-for-agent-management.md)의 Paseo 채택 결정은 [Migration #35](https://github.com/NaruForge/worknaru/issues/35)에서 적용하며, 분석·결정 문서 병합만으로 아래 명령·계약·데이터 형식이 바뀌지는 않는다. 이행 중 변경한 계약은 관련 동작 시험과 이 안내를 함께 갱신한다.
 
 ## 디자인 컨셉 프로토타입
