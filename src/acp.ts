@@ -308,6 +308,8 @@ export class AcpRuntime {
         if (confirmed) this.changed(this.store.finishRun(runId, 'failed', code));
         else this.changed(this.store.blockRun(runId));
       } catch { /* Storage failure keeps the last durable state; still terminate the owned job. */
+        // A failed write cannot advance the revision, but watchers still need the storage fault.
+        try { this.emit(runId); } catch { /* Unreadable storage must not prevent process cleanup. */ }
         for (const opening of this.opening.values()) opening.abort.abort();
         for (const agent of this.agents.values()) { agent.connection.close(); await agent.process.stop(); }
       }

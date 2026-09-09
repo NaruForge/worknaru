@@ -139,7 +139,7 @@ npm run --silent rpc -- --url $rpcUrl --request-file .worknaru-test/rpc-request.
 
 요청은 `{ method, params }`를 사용하고, 변경 요청에는 **직접 지정한** `requestId`, `storeEpoch`를 추가한다. `type`과 `callId`는 도구가 생성하므로 입력하지 않는다. 필드와 입력 검증은 기존 서버 계약을 사용하며 지원 여부는 `ready.capabilities`로 확인한다. 잘못된 식별자나 저장 세대를 자동으로 고치지 않는다.
 
-일반 호출은 기존 `response` 봉투 하나를 JSON으로 출력한다. `runs.watch`는 초기 응답과 이후 `run.changed`를 한 줄씩 출력하고 `completed`, `failed`, `cancelled`에서 종료한다. 정상 조회의 종료 코드 0은 조회 성공을 뜻하며, 조회한 Run 자체가 성공했다는 뜻은 아니다. 입력·연결·프로토콜·서버 오류는 종료 코드 1이고 진단은 표준 오류에 출력한다. 인증키는 출력하지 않는다. 응답에는 요청한 대화·파일 본문이 포함될 수 있다.
+일반 호출은 기존 `response` 봉투 하나를 JSON으로 출력한다. `runs.watch`는 초기 응답과 이후 `run.changed`를 한 줄씩 출력하고 `completed`, `failed`, `cancelled`에서 종료한다. 저장 장애는 revision 증가 없이 전달될 수 있으므로 같은 revision의 알림도 출력하며, 더 오래된 revision만 제외한다. 정상 조회의 종료 코드 0은 조회 성공을 뜻하며, 조회한 Run 자체가 성공했다는 뜻은 아니다. 입력·연결·프로토콜·서버 오류는 종료 코드 1이고 진단은 표준 오류에 출력한다. 인증키는 출력하지 않는다. 응답에는 요청한 대화·파일 본문이 포함될 수 있다.
 
 다음 함수는 표준 입력으로 요청을 보내는 예제다. 업무 판정이나 자동 재시도는 하지 않는다.
 
@@ -450,7 +450,7 @@ Windows의 예약 포트 범위 등으로 5173에서 `EACCES`가 발생하면 �
 }
 ```
 
-`decision`은 `allow` 또는 `reject`다. 성공 응답은 `{ accepted: true, requestId, run }`이고 접수 시점의 Run 스냅샷을 포함한다. `tools`에는 `toolId`, `path`, `before`, `after`, `state`, `errorCode`, `createdAt`이 있다. 상태는 `pending → approved → applying → completed` 또는 `rejected`, `failed`, `cancelled`, `unknown`이다. 내부 파일 식별자와 도구 연결 토큰은 클라이언트에 전달하지 않는다. ACP를 끈 기록 조회 실행에서도 파일 기록은 읽을 수 있지만 승인 응답은 받지 않는다. 터미널 Chat 클라이언트에는 승인 입력 UI가 없으므로 파일 승인은 Web UI에서 처리한다.
+`decision`은 `allow` 또는 `reject`다. 성공 응답은 `{ accepted: true, requestId, run }`이고 접수 시점의 Run 스냅샷을 포함한다. `tools`에는 `toolId`, `path`, `before`, `after`, `state`, `errorCode`, `createdAt`이 있다. 상태는 `pending → approved → applying → completed` 또는 `rejected`, `failed`, `cancelled`, `unknown`이다. 내부 파일 식별자와 도구 연결 토큰은 클라이언트에 전달하지 않는다. ACP를 끈 기록 조회 실행에서도 파일 기록은 읽을 수 있지만 승인 응답은 받지 않는다. 터미널 Chat 클라이언트에는 승인 입력 UI가 없으므로 Web UI 또는 공통 `rpc` 도구의 `permissions.respond`로 승인·거절한다.
 
 구현은 기존 ACP 연결을 유지하며, 대화별 Codex 설정으로 `worknaru_files` MCP stdio 도구 두 개(`read_text_file`, `edit_text_file`)를 제공한다. `codex-acp` 1.10.0의 표준 `mcpServers` 변환은 도구별 승인 모드와 시간 제한을 전달하지 않으므로 대화의 `CODEX_CONFIG`에 함께 전달한다. 이 두 내부 도구의 Codex 승인 모드는 `approve`, 호출 제한은 360초다. 이는 내부 도구 진입 시 중복 승인을 생략하는 설정이며 실제 파일 쓰기는 항상 WorkNaru의 사용자 승인을 기다린다. 다른 ACP 승인 요청은 자동 허용하지 않는다. 메타데이터 조회에는 파일 도구를 연결하지 않는다. [Codex 설정 계약](https://learn.chatgpt.com/docs/config-file/config-reference)
 

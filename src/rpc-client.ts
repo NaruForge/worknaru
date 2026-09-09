@@ -110,7 +110,8 @@ async function main() {
         }
         const event = z.object({ type: z.literal('run.changed'), run: runSchema }).parse(frame);
         if (request!.method !== 'runs.watch' || event.run.runId !== request!.params.runId) throw new Error();
-        if (event.run.revision <= revision) return;
+        // Storage availability can change even when the persisted revision cannot advance.
+        if (event.run.revision < revision) return;
         revision = event.run.revision; output(event);
         if (['completed', 'failed', 'cancelled'].includes(event.run.state)) finish();
       } catch { finish(new RpcError('PROTOCOL_MISMATCH', 'Invalid Daemon response or protocol version.')); }

@@ -91,6 +91,29 @@ test('headless RPC uses a separate daemon, persists a zero-client completion, se
   assert.equal((await rpc(f, restarted, 'runs.get', { runId: run.runId })).text, completed.text);
 });
 
+test('RPC watch reports same-revision storage faults from the actual daemon', async (t) => {
+  const f = fixture(t);
+  const daemon = await launch(f, { entry: join(projectRoot, 'tests/acp-daemon.mjs') });
+  const { session } = await rpc(f, daemon, 'sessions.create', { workspaceId: daemon.workspace.workspaceId }, identity(daemon));
+  const { run } = await rpc(f, daemon, 'runs.start', { sessionId: session.sessionId, text: 'gated' }, identity(daemon));
+  await waitFor(() => agentLog(f), (events) => events.some((event) => event.type === 'prompt' && event.text === 'gated'));
+  const watch = caller(f, daemon, { method: 'runs.watch', params: { runId: run.runId } }, { interruptible: true });
+  await waitFor(() => watch.stdout(), (value) => value.includes('response'));
+  const initial = JSON.parse(watch.stdout().trim()).result;
+  assert.equal(initial.storageAvailable, true);
+  const db = new DatabaseSync(join(f.data, 'records.sqlite'));
+  f.cleanups.push(() => db.close());
+  db.exec("CREATE TRIGGER fail_rpc_output BEFORE UPDATE OF text ON messages BEGIN SELECT RAISE(ABORT, 'test output failure'); END");
+  writeFileSync(join(f.root, 'release-output'), 'release');
+  await waitFor(() => watch.stdout(), (value) => value.includes('"storageAvailable":false'), 'RPC did not report the storage fault');
+  watch.child.send('interrupt');
+  const result = await watch.done(); assert.equal(result.code, 0, result.stderr);
+  const fault = result.frames.find((frame) => frame.type === 'run.changed' && !frame.run.storageAvailable).run;
+  assert.equal(fault.revision, initial.revision);
+  assert.equal(fault.text, initial.text);
+  assert.equal(fault.state, 'running');
+});
+
 test('headless file approval remains pending without clients and is allowed or rejected through RPC', async (t) => {
   const f = fixture(t); writeFileSync(join(f.workspace, 'sample.txt'), '원래 내용\n');
   const daemon = await launch(f, { entry: join(projectRoot, 'tests/acp-daemon.mjs') });
