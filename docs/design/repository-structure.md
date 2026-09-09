@@ -6,6 +6,8 @@
 - 저장소·패키지 선택의 근거: [ADR-0013](../adr/0013-start-with-one-package-and-explicit-code-boundaries.md)
 - 참고 자료: [저장소 구조 조사](../research/2026-09-08-repository-architecture.md)
 
+Paseo로 Agent 관리를 위임하는 결정과 앞으로의 책임은 [ADR-0016](../adr/0016-use-paseo-for-agent-management.md)을 따른다. 이 문서의 초기 설계와 6절 코드 표는 ACP 기반 출발점·현재 구현의 설명이며, Migration 구현 시 실제 배치에 맞춰 갱신한다.
+
 ## 1. 지금 정할 범위
 
 **이 설계는 저장소의 출발 방식과 큰 책임 경계만 다룬다. 상세 폴더·파일 배치는 첫 기능을 구현하면서 정한다.** 코드가 없는 상태에서 미래 영역의 디렉터리, 공개 함수, 테스트 파일과 실행 명령까지 미리 정하지 않는다.

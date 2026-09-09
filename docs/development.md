@@ -1,5 +1,7 @@
 # 로컬 Daemon 개발과 저장 검증
 
+이 문서는 현재 실행 가능한 ACP 구현의 명령과 동작을 설명한다. [ADR-0016](adr/0016-use-paseo-for-agent-management.md)의 Paseo 채택 결정은 [Migration #35](https://github.com/NaruForge/worknaru/issues/35)에서 적용하며, 분석·결정 문서 병합만으로 아래 명령·계약·데이터 형식이 바뀌지는 않는다. 이행 중 변경한 계약은 관련 동작 시험과 이 안내를 함께 갱신한다.
+
 ## 디자인 컨셉 프로토타입
 
 `npm run build:prototype` 후 `npm run preview:prototype`을 실행하고 `http://127.0.0.1:15176`을 연다. 프로토타입은 예제 데이터만 사용하고 실제 AI·Daemon 요청이나 파일 수정을 수행하지 않는다. 시안의 배색 저장은 경로별 시안 전용 localStorage를 사용하며 제품의 설정 키와 분리한다. 종료는 해당 터미널의 `Ctrl+C`다.

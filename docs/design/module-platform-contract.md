@@ -29,7 +29,7 @@ Module은 자신의 업무를 맡고, 공통 기능이 필요할 때 플랫폼�
 - Module은 업무 서비스이며, 업무 화면·규칙·데이터와 결과를 소유한다. [ADR-0006](../adr/0006-define-modules-as-business-services.md)
 - 업무 데이터와 AI Session은 별도로 관리하고 필요에 따라 연결한다. [ADR-0007](../adr/0007-separate-business-data-from-ai-sessions.md)
 - Chat은 첫 기본 제공 Module이다. 다른 Module은 Chat을 거치지 않고 플랫폼의 AI 기능을 사용한다. [ADR-0008](../adr/0008-provide-chat-as-a-default-module.md)
-- 웹과 데스크톱이 같은 Daemon의 상태와 실행 기능을 사용하고, 외부 에이전트 연결은 ACP가 담당한다. [ADR-0002](../adr/0002-use-daemon-core-with-web-and-desktop-clients.md), [ADR-0001](../adr/0001-use-acp-for-agent-connections.md)
+- 웹과 데스크톱은 같은 WorkNaru Daemon의 상태와 실행 기능을 사용한다. Agent 내부 실행은 Paseo에 위임하도록 결정했으며, Module은 기존처럼 플랫폼 계약을 사용한다. [ADR-0016](../adr/0016-use-paseo-for-agent-management.md). 현재 코드는 Migration 전 ACP 구현이다.
 
 이 설계는 위 경계를 바탕으로 Module 등록 정보와 공통 기능 호출·상태 전달 계약을 구체화한다. UI 프레임워크, 전송 기술, 데이터베이스나 Module의 실행 언어는 선택하지 않는다.
 

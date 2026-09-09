@@ -1,7 +1,8 @@
 # 0001. 외부 AI 에이전트 연결에 ACP 채택
 
 - 날짜: 2026-09-08
-- Status: Accepted
+- Status: Superseded
+- 대체 결정: [0016. AI Agent 관리 기반으로 Paseo 채택](0016-use-paseo-for-agent-management.md) — 2026-09-09 사용자 결정으로 대체. 아래 내용은 당시 결정의 근거로 보존한다.
 - 관련 Work Item: [#3 WorkNaru 플랫폼 초기 아키텍처 설계](https://github.com/NaruForge/worknaru/issues/3)
 - 관련 문서: [제품 방향](../../README.md), [기존 플랫폼 조사](../research/2026-09-08-ai-workspace-platforms.md), [프로젝트 기록 규약](../project-records.md)
 
