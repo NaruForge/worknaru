@@ -12,7 +12,12 @@ export function developmentEndpoint() {
   return value;
 }
 
+export function developmentKeyRequired() {
+  return document.querySelector<HTMLMetaElement>('meta[name="worknaru-dev-auth"]')?.content !== 'none';
+}
+
 export function useDevServer(getToken: (endpoint: string) => string) {
+  const [keyRequired] = useState(developmentKeyRequired);
   const [endpoint] = useState(developmentEndpoint);
   const [base] = useState(() => document.querySelector<HTMLMetaElement>('meta[name="worknaru-dev-base"]')?.content ?? '/');
   const [instance] = useState(() => document.querySelector<HTMLMetaElement>('meta[name="worknaru-dev-instance"]')?.content);
@@ -23,7 +28,7 @@ export function useDevServer(getToken: (endpoint: string) => string) {
   const request = async (path: string, token: string, confirm = false) => {
     const response = await fetch(`${base}__worknaru_dev/${path}`, {
       method: path === 'stop' ? 'POST' : 'GET', cache: 'no-store',
-      headers: { Authorization: `Bearer ${token}`, 'X-WorkNaru-Dev-Instance': instance ?? '', ...(confirm ? { 'X-WorkNaru-Confirm-Stop': 'yes' } : {}) },
+      headers: { ...(keyRequired ? { Authorization: `Bearer ${token}` } : {}), 'X-WorkNaru-Dev-Instance': instance ?? '', ...(confirm ? { 'X-WorkNaru-Confirm-Stop': 'yes' } : {}) },
       signal: AbortSignal.timeout(180_000),
     });
     const result = await response.json() as { activeRuns?: number; stopped?: boolean; error?: string };
@@ -46,7 +51,7 @@ export function useDevServer(getToken: (endpoint: string) => string) {
   };
   const check = async (token = getToken(endpoint ?? '') || key) => {
     setError('');
-    if (!token) { setStage('key'); return; }
+    if (keyRequired && !token) { setStage('key'); return; }
     setKey(token);
     setStage('checking');
     try {

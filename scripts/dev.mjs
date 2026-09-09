@@ -12,7 +12,7 @@ import { parseArgs } from 'node:util';
 const root = realpathSync(fileURLToPath(new URL('../', import.meta.url)));
 
 // Both servers belong to this invocation. No PID files or process-name searches.
-export async function startDevServers({ daemonOptions, webPort = 15173, hub, onStopped = () => {} }) {
+export async function startDevServers({ daemonOptions, webPort = 15173, hub, requireKey = false, onStopped = () => {} }) {
   const [{ startDaemon }, { createServer }] = await Promise.all([import('../dist/daemon.js'), import('vite')]);
   const origin = `http://127.0.0.1:${webPort}`;
   if (hub && (!/^[a-f0-9]{16}$/.test(hub.Id) || hub.BasePath !== `/p/${hub.Id}/` || hub.TailnetOrigin !== 'https://bsw-home.tailec99c3.ts.net:9191')) throw new Error('올바른 Hub 경로가 필요합니다.');
@@ -20,7 +20,7 @@ export async function startDevServers({ daemonOptions, webPort = 15173, hub, onS
   const route = `${base}__worknaru_dev`;
   const relayPath = `${base}__worknaru_ws`;
   const allowedOrigins = new Set([origin, ...(hub ? [hub.TailnetOrigin, 'http://127.0.0.1:9191'] : [])]);
-  const daemon = await startDaemon({ ...daemonOptions, projectRoot: root, origins: [origin] });
+  const daemon = await startDaemon({ ...daemonOptions, disableKeyAuth: !requireKey, projectRoot: root, origins: [origin] });
   const httpServer = createHttpServer();
   httpServer.headersTimeout = 5_000;
   httpServer.requestTimeout = 10_000;
@@ -68,6 +68,7 @@ export async function startDevServers({ daemonOptions, webPort = 15173, hub, onS
           { tag: 'meta', attrs: { name: 'worknaru-dev-endpoint', content: hub ? relayPath : daemon.url }, injectTo: 'head' },
           { tag: 'meta', attrs: { name: 'worknaru-dev-base', content: base }, injectTo: 'head' },
           { tag: 'meta', attrs: { name: 'worknaru-dev-instance', content: daemon.daemonInstanceId }, injectTo: 'head' },
+          { tag: 'meta', attrs: { name: 'worknaru-dev-auth', content: requireKey ? 'key' : 'none' }, injectTo: 'head' },
         ],
         configureServer(server) {
           server.middlewares.use((req, res, next) => {
@@ -76,8 +77,8 @@ export async function startDevServers({ daemonOptions, webPort = 15173, hub, onS
             if (req.headers.host !== `127.0.0.1:${webPort}` ||
                 (req.headers.origin !== undefined && !allowedOrigins.has(req.headers.origin)) ||
                 req.headers['x-worknaru-dev-instance'] !== daemon.daemonInstanceId ||
-                supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
-              reply(res, 403, { error: '이번 개발 실행의 연결 키가 필요합니다.' }); return;
+                (requireKey && (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)))) {
+              reply(res, 403, { error: requireKey ? '이번 개발 실행의 연결 키가 필요합니다.' : '이번 개발 실행에서 허용된 요청이 아닙니다.' }); return;
             }
             if (daemonClosing) { reply(res, 409, { error: '종료가 이미 진행 중입니다.' }); return; }
             try {
@@ -119,8 +120,8 @@ export async function startDevServers({ daemonOptions, webPort = 15173, hub, onS
           !allowedOrigins.has(request.headers.origin) || request.headers.upgrade?.toLowerCase() !== 'websocket') {
         socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'); return;
       }
-      // Only this Daemon is reachable. Its original hello/token authentication
-      // and protocol limits remain in force; no arbitrary forwarding target.
+      // Only this Daemon is reachable. Its configured key requirement and
+      // protocol limits apply; no arbitrary forwarding target.
       const upstream = connectTcp({ host: '127.0.0.1', port: Number(new URL(daemon.url).port) });
       sockets.add(upstream);
       upstream.once('close', () => { sockets.delete(upstream); socket.destroy(); });
@@ -163,18 +164,19 @@ async function main() {
   const { values } = parseArgs({ options: {
     'web-port': { type: 'string', default: '15173' }, 'daemon-port': { type: 'string', default: '4310' },
     'data-dir': { type: 'string', default: '.worknaru-dev' }, workspace: { type: 'string', default: '.' },
-    'codex-path': { type: 'string' }, hub: { type: 'boolean' }, 'no-open': { type: 'boolean' }, 'no-clipboard': { type: 'boolean' }, help: { type: 'boolean' },
+    'codex-path': { type: 'string' }, hub: { type: 'boolean' }, 'require-key': { type: 'boolean' }, 'no-open': { type: 'boolean' }, 'no-clipboard': { type: 'boolean' }, help: { type: 'boolean' },
   } });
   if (values.help) {
-    console.log('npm run dev -- [--hub] [--web-port 15173] [--daemon-port 4310] [--workspace .] [--data-dir .worknaru-dev] [--codex-path <codex.exe>] [--no-open] [--no-clipboard]\n--hub: 기존 Tailnet Preview Hub에 20분 연결\n종료: UI의 개발 서버 종료 버튼 또는 Ctrl+C'); return;
+    console.log('npm run dev -- [--hub] [--require-key] [--web-port 15173] [--daemon-port 4310] [--workspace .] [--data-dir .worknaru-dev] [--codex-path <codex.exe>] [--no-open] [--no-clipboard]\n기본: 접속키 인증 없이 자동 연결\n--hub: 기존 Tailnet Preview Hub에 20분 연결\n--require-key: 접속키 인증 활성화\n종료: UI의 개발 서버 종료 버튼 또는 Ctrl+C'); return;
   }
   const [major, minor] = process.versions.node.split('.').map(Number);
   if (process.platform !== 'win32' || major !== 24 || minor < 18) throw new Error('Windows와 Node.js 24.18 이상 24.x가 필요합니다.');
   const ports = [values['web-port'], values['daemon-port']].map(Number);
   if (ports.some((port) => !Number.isInteger(port) || port < 1 || port > 65535) || ports[0] === ports[1]) throw new Error('서로 다른 1~65535 포트를 지정하세요.');
-  const token = process.env.WORKNARU_TOKEN ?? randomBytes(32).toString('base64url');
-  if (!/^[a-zA-Z0-9_-]{43,128}$/.test(token)) throw new Error('WORKNARU_TOKEN에는 32바이트 이상의 무작위 base64url 연결 키를 지정하세요.');
-  if (values['no-clipboard'] && !process.env.WORKNARU_TOKEN) throw new Error('--no-clipboard 사용 시 WORKNARU_TOKEN을 먼저 설정하세요.');
+  const requireKey = values['require-key'] ?? false;
+  const token = requireKey ? process.env.WORKNARU_TOKEN ?? randomBytes(32).toString('base64url') : undefined;
+  if (requireKey && !/^[a-zA-Z0-9_-]{43,128}$/.test(token)) throw new Error('WORKNARU_TOKEN에는 32바이트 이상의 무작위 base64url 연결 키를 지정하세요.');
+  if (requireKey && values['no-clipboard'] && !process.env.WORKNARU_TOKEN) throw new Error('--require-key --no-clipboard 사용 시 WORKNARU_TOKEN을 먼저 설정하세요.');
   const require = createRequire(import.meta.url);
   try { for (const name of ['typescript', 'vite', '@agentclientprotocol/codex-acp']) require.resolve(name); }
   catch { throw new Error('먼저 npm ci --cache .npm-cache --ignore-scripts를 실행하세요.'); }
@@ -201,7 +203,7 @@ async function main() {
   let stopped = false;
   let attachment;
   let attaching;
-  servers = await startDevServers({ webPort: ports[0], hub, daemonOptions: {
+  servers = await startDevServers({ webPort: ports[0], hub, requireKey, daemonOptions: {
     token, port: ports[1], dataDirectory: values['data-dir'], workspaceDirectory: resolve(values.workspace), acp: { codexPath },
   }, async onStopped(confirmed) {
     stopped = true;
@@ -224,7 +226,7 @@ async function main() {
       console.log(`Hub: ${attachment.TailnetUrl}\n종류: attached-dev-server · 만료: ${attachment.ExpiresAt}\n공유만 해제해도 개발 서버는 계속 실행됩니다.`);
       console.log(`20분 연장: & 'C:\\Projects\\TailscaleOps\\scripts\\artifact-preview\\Extend-ArtifactPreview.ps1' -Id ${hub.Id} -Minutes 20\n공유 해제: & 'C:\\Projects\\TailscaleOps\\scripts\\artifact-preview\\Detach-ArtifactDevServer.ps1' -Id ${hub.Id}`);
     }
-    if (!values['no-clipboard']) {
+    if (requireKey && !values['no-clipboard']) {
       await run('pwsh.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '$ErrorActionPreference = "Stop"; [Console]::In.ReadToEnd() | Set-Clipboard'], { input: token });
       console.log('연결 키를 클립보드에 복사했습니다. 연결 창에 붙여넣으세요.');
     }

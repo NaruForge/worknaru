@@ -4,7 +4,7 @@ import type { ChatStateStore } from '../src/chat-state.js';
 import { Chat, ConversationList } from './chat.js';
 import { Icon } from './icons.js';
 import { AiControls } from './ai-controls.js';
-import { developmentEndpoint, useDevServer } from './dev-server.js';
+import { developmentEndpoint, developmentKeyRequired, useDevServer } from './dev-server.js';
 
 function Dialog({ title, children, close, drawer = false }: { title: string; children: ReactNode; close: () => void; drawer?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -53,11 +53,13 @@ function WorkspaceShell({ name, online, sidebar, children, connection, settings,
 
 export function App({ model }: { model: ChatStateStore }) {
   const state = useSyncExternalStore(model.subscribe, model.getSnapshot);
-  const [connectionOpen, setConnectionOpen] = useState(true);
+  const [keyRequired] = useState(developmentKeyRequired);
+  const [connectionOpen, setConnectionOpen] = useState(keyRequired);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [endpoint, setEndpoint] = useState(() => developmentEndpoint() ?? 'ws://127.0.0.1:4310/ws');
   const [tokenInput, setTokenInput] = useState('');
   const credentials = useRef({ endpoint: '', token: '' });
+  const autoConnected = useRef(false);
   const dev = useDevServer((address) => endpoint.trim() === address && tokenInput ? tokenInput : credentials.current.endpoint === address ? credentials.current.token : '');
   const [theme, setTheme] = useState(matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
   const [wide, setWide] = useState(innerWidth >= 860);
@@ -70,6 +72,16 @@ export function App({ model }: { model: ChatStateStore }) {
     return () => query.removeEventListener('change', update);
   }, []);
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
+  useEffect(() => {
+    const address = developmentEndpoint();
+    if (!keyRequired && address && !autoConnected.current) {
+      autoConnected.current = true;
+      credentials.current = { endpoint: address, token: '' };
+      void model.connect(address, '').then(() => {
+        if (model.getSnapshot().connection !== 'online') setConnectionOpen(true);
+      });
+    }
+  }, [model, keyRequired]);
   const connect = async () => {
     credentials.current = { endpoint: endpoint.trim(), token: tokenInput };
     setTokenInput('');
@@ -77,7 +89,7 @@ export function App({ model }: { model: ChatStateStore }) {
     if (model.getSnapshot().connection === 'online') setConnectionOpen(false);
   };
   const reconnect = () => {
-    if (credentials.current.token) void model.connect(credentials.current.endpoint, credentials.current.token);
+    if (credentials.current.endpoint && (!keyRequired || credentials.current.token)) void model.connect(credentials.current.endpoint, credentials.current.token);
     else setConnectionOpen(true);
   };
   const list = <ConversationList state={state} model={model} select={(id) => { void model.select(id); setDrawer(false); }} />;
@@ -117,8 +129,8 @@ export function App({ model }: { model: ChatStateStore }) {
       <p className="muted">실행 중인 로컬 Daemon에 연결합니다.</p>
       <form onSubmit={(event) => { event.preventDefault(); void connect(); }} className="connection-form">
         <label>Daemon 주소<input type="url" required value={endpoint} onChange={(event) => setEndpoint(event.target.value)} spellCheck={false} /></label>
-        <label>연결 키<input type="password" required value={tokenInput} onChange={(event) => setTokenInput(event.target.value)} autoComplete="off" /></label>
-        <p className="muted small">연결 키는 이 화면의 메모리에서만 사용합니다. 화면을 새로 열면 다시 입력합니다.</p>
+        {keyRequired && <><label>연결 키<input type="password" required value={tokenInput} onChange={(event) => setTokenInput(event.target.value)} autoComplete="off" /></label>
+        <p className="muted small">연결 키는 이 화면의 메모리에서만 사용합니다. 화면을 새로 열면 다시 입력합니다.</p></>}
         {state.error && <p role="alert" className="error-text">{state.error}</p>}
         <button className="primary" type="submit" disabled={state.connection === 'connecting'}>{state.connection === 'connecting' ? '연결 확인 중…' : '연결'}</button>
       </form>
