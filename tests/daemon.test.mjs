@@ -99,6 +99,9 @@ test('authentication and protocol version precede every business request', async
   const daemon = await launch(f);
   const wrong = await connect(f, daemon, randomBytes(32).toString('base64url'));
   assert.equal(wrong.ready.error.code, 'AUTH_FAILED');
+  const missing = await connect(f, daemon, null);
+  missing.send({ type: 'hello', protocolMajor: 1 });
+  assert.equal((await missing.receive()).error.code, 'AUTH_FAILED');
   const early = await connect(f, daemon, null);
   early.send({ type: 'request', callId: 'early', method: 'workspaces.get', params: {} });
   assert.equal((await early.receive()).error.code, 'AUTH_REQUIRED');

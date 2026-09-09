@@ -39,10 +39,8 @@ test('real Tailnet Hub carries UI, chat and HMR; detach preserves the upstream',
   const received = [];
   page.on('websocket', (ws) => ws.on('framereceived', (frame) => received.push({ url: ws.url(), payload: String(frame.payload) })));
   await page.goto(attachment.TailnetUrl);
-  assert.equal(await page.getByLabel('Daemon 주소').inputValue(), `${hub.TailnetOrigin.replace('https:', 'wss:')}${hub.BasePath}__worknaru_ws`);
-  await page.getByLabel('연결 키', { exact: true }).fill(f.token);
-  await page.getByRole('button', { name: '연결', exact: true }).click();
   await page.getByRole('button', { name: '연결됨', exact: true }).waitFor();
+  assert.equal(await page.getByRole('dialog').count(), 0);
   await page.getByRole('button', { name: '새 대화', exact: true }).click();
   await page.getByRole('textbox', { name: '메시지', exact: true }).fill('Tailnet 연결 시험');
   await page.getByRole('button', { name: '메시지 전송' }).click();
@@ -55,8 +53,8 @@ test('real Tailnet Hub carries UI, chat and HMR; detach preserves the upstream',
   for (const url of [attachment.LocalUrl, attachment.TailnetUrl]) assert.equal((await fetch(url)).status, 404);
   assert.equal((await fetch(server.localUrl)).status, 200);
   await page.goto(server.localUrl);
-  await page.getByLabel('연결 키', { exact: true }).fill(f.token);
-  await page.getByRole('dialog', { name: 'Workspace 연결' }).getByRole('button', { name: '개발 서버 종료' }).click();
+  await page.getByRole('button', { name: '연결됨', exact: true }).waitFor();
+  await page.getByRole('button', { name: '개발 서버 종료', exact: true }).click();
   await page.getByRole('heading', { name: '종료되었습니다.' }).waitFor();
   assert.equal(await server.close(), true);
   console.log(`Verified then detached Preview ${hub.Id}; HTTP 200/404 on local and Tailnet routes; fake chat and HMR passed; no model prompts.`);

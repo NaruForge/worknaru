@@ -19,14 +19,15 @@ export type DaemonOptions = {
   projectRoot: string;
   dataDirectory: string;
   workspaceDirectory: string;
-  token: string;
+  token?: string;
+  disableKeyAuth?: boolean;
   port?: number;
   origins?: string[];
   acp?: AcpOptions;
 };
 
 export async function startDaemon(options: DaemonOptions) {
-  if (!/^[a-zA-Z0-9_-]{43,128}$/.test(options.token)) {
+  if (!options.disableKeyAuth && !/^[a-zA-Z0-9_-]{43,128}$/.test(options.token ?? '')) {
     throw new AppError('INVALID_AUTH_CONFIG', 'WORKNARU_TOKEN에 32바이트 이상의 무작위 base64url 토큰을 설정하세요.');
   }
   if (options.port !== undefined && (!Number.isInteger(options.port) || options.port < 0 || options.port > 65535)) {
@@ -56,7 +57,7 @@ export async function startDaemon(options: DaemonOptions) {
   } catch (error) { store.close(); throw error; }
   const methods = runtime ? [...METHODS, 'ai.get', 'settings.update', 'sessions.configure', 'runs.start', 'runs.cancel', 'runs.get', 'runs.watch', 'runs.unwatch'] : [...METHODS, 'runs.get', 'runs.watch', 'runs.unwatch'];
   const instanceId = randomUUID();
-  const token = Buffer.from(options.token);
+  const token = Buffer.from(options.disableKeyAuth ? '' : options.token!);
   const server = createServer((_request, response) => {
     response.writeHead(404, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' });
     response.end('Not found');
@@ -107,8 +108,8 @@ export async function startDaemon(options: DaemonOptions) {
       if (!authenticated) {
         const parsed = helloSchema.safeParse(data);
         if (!parsed.success) { failConnection('AUTH_REQUIRED', '먼저 인증과 버전을 확인해야 합니다.'); return; }
-        const candidate = Buffer.from(parsed.data.token);
-        if (candidate.length !== token.length || !timingSafeEqual(candidate, token)) {
+        const candidate = Buffer.from(parsed.data.token ?? '');
+        if (!options.disableKeyAuth && (candidate.length !== token.length || !timingSafeEqual(candidate, token))) {
           failConnection('AUTH_FAILED', '인증에 실패했습니다.'); return;
         }
         if (parsed.data.protocolMajor !== PROTOCOL_MAJOR) {

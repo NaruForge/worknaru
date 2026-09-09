@@ -18,7 +18,7 @@ const textInput = z.string().min(1).max(MAX_TEXT_BYTES).refine(
 export const helloSchema = z.strictObject({
   type: z.literal('hello'),
   protocolMajor: z.number().int(),
-  token: z.string().min(43).max(128),
+  token: z.string().min(43).max(128).optional(),
 });
 
 export const requestSchema = z.discriminatedUnion('method', [

@@ -19,12 +19,12 @@ const test = base.extend({
   },
 });
 
-async function developmentServer(records, acp = false, hub) {
+async function developmentServer(records, acp = false, hub, requireKey = true) {
   const socket = createServer();
   socket.listen(0, '127.0.0.1'); await once(socket, 'listening');
   const port = socket.address().port;
   await new Promise((resolve) => socket.close(resolve));
-  const server = await startDevServers({ webPort: port, hub, daemonOptions: {
+  const server = await startDevServers({ webPort: port, hub, requireKey, daemonOptions: {
     dataDirectory: records.data, workspaceDirectory: records.workspace, token: records.token, port: 0,
     ...(acp ? { acp: { command: { executable: process.execPath, arguments: [join(projectRoot, 'tests/fake-acp.mjs')], cwd: records.workspace,
       env: { ...process.env, TEST_AGENT_LOG: join(records.root, 'agent.log'), TEMP: records.root, TMP: records.root },
@@ -114,6 +114,33 @@ test('dev UI can stop before connecting; closing a tab does not stop the servers
   await expect(page.getByRole('heading', { name: '종료되었습니다.' })).toBeVisible();
   expect(await server.close()).toBe(true);
 });
+
+for (const hub of [undefined, { Id: '0123456789abcdef', BasePath: '/p/0123456789abcdef/', TailnetOrigin: 'https://bsw-home.tailec99c3.ts.net:9191' }]) {
+  test(`key-free ${hub ? 'Hub' : 'local'} UI automatically connects, reloads, chats and stops`, async ({ page, records }) => {
+    const server = await developmentServer(records, true, hub, false);
+    const sent = [];
+    page.on('websocket', (socket) => socket.on('framesent', (frame) => sent.push(String(frame.payload))));
+    await page.goto(server.localUrl);
+    await expect(page.getByRole('button', { name: '연결됨', exact: true })).toBeVisible();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await page.getByRole('button', { name: '연결됨', exact: true }).click();
+    await expect(page.getByLabel('연결 키', { exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Workspace 연결 닫기' }).click();
+    await newSession(page);
+    await send(page, '키 없이 이어지는 대화');
+    await expect(page.locator('.run-state')).toHaveText('응답 완료');
+    await page.reload();
+    await expect(page.getByRole('button', { name: '연결됨', exact: true })).toBeVisible();
+    await expect(page.getByRole('article', { name: '내 메시지' })).toContainText('키 없이 이어지는 대화');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    const hellos = sent.filter((frame) => frame.startsWith('{')).map((frame) => JSON.parse(frame)).filter((frame) => frame.type === 'hello');
+    expect(hellos.length).toBeGreaterThanOrEqual(2);
+    expect(hellos.every((frame) => !('token' in frame))).toBe(true);
+    await page.getByRole('button', { name: '개발 서버 종료', exact: true }).click();
+    await expect(page.getByRole('heading', { name: '종료되었습니다.' })).toBeVisible({ timeout: 20_000 });
+    expect(await server.close()).toBe(true);
+  });
+}
 
 async function login(page, daemon, records) {
   await page.goto(origin);

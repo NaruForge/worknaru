@@ -72,7 +72,7 @@ export class WebClient {
   ready?: Ready;
   onRun: (run: Run) => void = () => {};
   onDisconnect: (error: ClientError) => void = () => {};
-  constructor(private readonly gatewayEndpoint?: string) {}
+  constructor(private readonly gatewayEndpoint?: string, private readonly keyRequired = true) {}
 
   async connect(endpoint: string, token: string): Promise<Ready> {
     this.close();
@@ -81,7 +81,7 @@ export class WebClient {
     const gateway = url.href === this.gatewayEndpoint && ['ws:', 'wss:'].includes(url.protocol) && /^\/p\/[a-f0-9]{16}\/__worknaru_ws$/.test(url.pathname);
     if ((!local && !gateway) || url.search || url.hash || url.username || url.password)
       throw new ClientError('INVALID_URL', '로컬 Daemon 주소 또는 이 화면의 개발 서버 연결 주소를 사용하세요.');
-    if (!/^[a-zA-Z0-9_-]{43,128}$/.test(token)) throw new ClientError('INVALID_TOKEN', 'Daemon 실행 시 지정한 연결 키를 입력하세요.');
+    if ((this.keyRequired || token) && !/^[a-zA-Z0-9_-]{43,128}$/.test(token)) throw new ClientError('INVALID_TOKEN', 'Daemon 실행 시 지정한 연결 키를 입력하세요.');
     const socket = new WebSocket(url);
     this.socket = socket;
     return new Promise<Ready>((resolve, reject) => {
@@ -100,7 +100,7 @@ export class WebClient {
         }
         socket.close();
       };
-      socket.onopen = () => socket.send(JSON.stringify({ type: 'hello', protocolMajor: 1, token }));
+      socket.onopen = () => socket.send(JSON.stringify({ type: 'hello', protocolMajor: 1, ...(token ? { token } : {}) }));
       socket.onclose = () => fail(new ClientError('DISCONNECTED', '연결이 끊겼습니다. 마지막 확인 기록을 표시합니다.'));
       socket.onmessage = (event) => {
         if (this.socket !== socket || ended) return;

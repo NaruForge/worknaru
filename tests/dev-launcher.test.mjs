@@ -21,7 +21,7 @@ async function freePort() {
 async function start(f, options = {}) {
   const webPort = options.webPort ?? await freePort();
   const stopped = Promise.withResolvers();
-  const server = await startDevServers({ webPort, hub: options.hub, daemonOptions: {
+  const server = await startDevServers({ webPort, hub: options.hub, requireKey: options.requireKey ?? true, daemonOptions: {
     dataDirectory: f.data, workspaceDirectory: f.workspace, token: f.token, port: 0, ...options.daemonOptions,
   }, onStopped: stopped.resolve });
   f.cleanups.push(() => server.close());
@@ -96,6 +96,35 @@ test('Hub subpath relays only its daemon and retains origin and hello authentica
   assert.deepEqual(await stopped.json(), { stopped: true });
   assert.equal(await deadline(server.stopped), true);
 });
+
+for (const hub of [undefined, { Id: '0123456789abcdef', BasePath: '/p/0123456789abcdef/', TailnetOrigin: 'https://bsw-home.tailec99c3.ts.net:9191' }]) {
+  test(`development ${hub ? 'Hub' : 'local'} connects and stops without a key while checking origin, instance and protocol`, async (t) => {
+    const f = fixture(t);
+    const server = await start(f, { requireKey: false, hub, daemonOptions: { token: undefined } });
+    const html = await (await fetch(server.localUrl)).text();
+    assert.match(html, /name="worknaru-dev-auth" content="none"/);
+    const url = hub ? `${server.origin.replace('http:', 'ws:')}${hub.BasePath}__worknaru_ws` : server.daemon.url;
+    const origin = hub?.TailnetOrigin ?? server.origin;
+    const client = await connect(f, { url }, null, { origin });
+    client.send({ type: 'hello', protocolMajor: 1 });
+    const ready = await client.receive();
+    assert.equal(ready.type, 'ready');
+    const session = await createSession({ ...client, ready }, server.daemon.workspace.workspaceId);
+    assert.ok(session.sessionId);
+    const version = await connect(f, { url }, null, { origin });
+    version.send({ type: 'hello', protocolMajor: 99 });
+    assert.equal((await version.receive()).error.code, 'PROTOCOL_MISMATCH');
+    await assert.rejects(connect(f, { url }, null, { origin: 'https://untrusted.example' }));
+    const route = `${server.localUrl}__worknaru_dev`;
+    const headers = { Origin: origin, 'X-WorkNaru-Dev-Instance': ready.daemonInstanceId };
+    for (const invalid of [{ ...headers, Origin: 'https://untrusted.example' }, { ...headers, 'X-WorkNaru-Dev-Instance': 'old-instance' }]) {
+      assert.equal((await fetch(`${route}/stop`, { method: 'POST', headers: invalid })).status, 403);
+    }
+    assert.equal((await fetch(`${route}/status`, { headers })).status, 200);
+    assert.deepEqual(await (await fetch(`${route}/stop`, { method: 'POST', headers })).json(), { stopped: true });
+    assert.equal(await deadline(server.stopped), true);
+  });
+}
 
 test('unconfirmed cleanup is an error response and never a successful shutdown', async (t) => {
   const f = fixture(t);
