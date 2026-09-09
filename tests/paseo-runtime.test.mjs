@@ -44,6 +44,20 @@ test('legacy data is rejected before any runtime starts', async () => {
   assert.equal(existsSync(join(options.dataDir, 'worknaru-format.json')), false);
 });
 
+test('live-test dispatch rejects another model or unconfirmed effective effort before sending', async () => {
+  let calls = 0;
+  const client = {
+    async listProviderModels() { return { models: [{ id: 'gpt-5.6-luna', thinkingOptions: [{ id: 'low' }] }] }; },
+    async fetchAgent() { return { agent: { status: 'idle', activeTurn: null, pendingPermissions: [],
+      runtimeInfo: { model: 'gpt-5.6-luna', thinkingOptionId: 'high' }, effectiveThinkingOptionId: 'low' } }; },
+    async sendMessage() { calls++; },
+  };
+  const runtime = new PaseoRuntime(client, {}, { workspace: 'fake' }, true, 0, Promise.resolve(true), () => {});
+  await assert.rejects(runtime.send('agent', 'not called', randomUUID(), { model: 'gpt-6-astra', effort: 'low' }), /TEST_MODEL_REQUIRED/);
+  await assert.rejects(runtime.send('agent', 'not called', randomUUID(), { model: 'gpt-5.6-luna', effort: 'low' }), /MODEL_UNCONFIRMED/);
+  assert.equal(calls, 0);
+});
+
 test('actual packaged server starts privately, rejects duplicate ownership and stops', { timeout: 90_000 }, async () => {
   const options = fixture();
   // Node is an intentionally unavailable Codex here. No model prompt or personal auth is used.

@@ -29,6 +29,8 @@
     "rpc": "node dist/rpc-client.js",
     "test:runtime": "npm run build:daemon && node --test tests/paseo-runtime.test.mjs",
     "test:live:paseo": "npm run build:daemon && node --test tests/paseo-live.mjs",
+    "start:paseo": "node dist/paseo-main.js",
+    "rpc:paseo": "node dist/paseo-rpc.js",
     "test:daemon": "npm run build:daemon && node --test tests/daemon.test.mjs tests/acp.test.mjs tests/settings.test.mjs tests/file-tools.test.mjs tests/web-client.test.mjs tests/rpc-client.test.mjs tests/cli.test.mjs"
   },
   "dependencies": {

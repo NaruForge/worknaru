@@ -142,8 +142,13 @@ export class PaseoRuntime {
   }
   async confirmSelection(agentId: string, selection: { model: string; effort: string }) {
     await this.checkSelection(selection);
-    const state = await this.inspect(agentId);
+    let state = await this.inspect(agentId);
+    if (state && !state.agent.runtimeInfo) {
+      await this.client.refreshAgent(agentId); // Restore native context on demand; this sends no prompt.
+      state = await this.inspect(agentId);
+    }
     if (!state || state.agent.runtimeInfo?.model !== selection.model ||
+      state.agent.runtimeInfo?.thinkingOptionId !== selection.effort ||
       state.agent.effectiveThinkingOptionId !== selection.effort) throw new Error('MODEL_UNCONFIRMED');
   }
   async send(agentId: string, text: string, messageId: string, selection: { model: string; effort: string }) {
