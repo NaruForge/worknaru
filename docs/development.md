@@ -7,13 +7,15 @@
 Windows, Node.js `>=24.18.0 <25`, PowerShell 7, Codex CLI와 기존 로그인이 필요하다. `@getpaseo/server`와 `@getpaseo/client`는 **0.8.0-beta.1**로 고정한다. 패키지 고정은 외부 Codex executable의 버전까지 고정하지 않는다.
 
 ```powershell
-npm ci --cache .npm-cache
+npm ci --cache .npm-cache   # 최초 설치 또는 의존성 변경 시
 npm run dev
 ```
 
 설치 script를 허용한다. 배포 서버는 `node-pty`와 speech native 패키지·플랫폼 의존성을 포함하며 root 타입 검사에는 `@types/express`가 필요하다. `--ignore-scripts` 설치는 실행 검증을 대체하지 않는다. 별도 빈 설치 디렉터리에서 표준 `npm ci`와 실제 서버 기동·Client 연결·종료를 확인했다.
 
 개발 실행은 최신 Daemon·UI를 빌드하고 Vite와 제품을 시작해 브라우저를 연다. UI는 기본 `http://127.0.0.1:15173/`, Daemon은 `ws://127.0.0.1:4310/ws`다. 실제 제품 주소를 HTML에 주입해 자동 연결하며 정확한 loopback Host·Origin만 허용한다. UI 소스 변경은 Vite가 반영한다. Daemon 변경은 종료 후 다시 실행한다.
+
+개발 UI는 출력된 `127.0.0.1` 주소로 연다. 통합 개발 실행의 Host 검사에서는 `localhost`로 바꾼 주소를 허용하지 않는다. 브라우저를 직접 열려면 `npm run dev -- --no-open`을 사용한다.
 
 | 개발 옵션 | 기본값·동작 |
 | --- | --- |
@@ -27,6 +29,17 @@ npm run dev
 
 상대 경로는 저장소 루트 기준이다. 사용 중인 포트를 자동 변경하거나 기존 프로세스를 종료하지 않는다. Windows 예약 포트 문제나 충돌이 있으면 `npm run dev -- --web-port 15175 --daemon-port 14310`처럼 지정한다. 설치·로그인은 자동 수행하지 않는다.
 
+### 실행 명령의 차이
+
+| 명령 | 시작하는 대상 | 빌드·변경 반영 |
+| --- | --- | --- |
+| `npm run dev` | 전용 runtime·WorkNaru Daemon·Vite, 브라우저 자동 열기 | 실행 전 전체 빌드. UI 소스는 자동 반영하고 Daemon 변경은 재시작 |
+| `npm run dev:web` | UI 개발용 Vite | UI 소스 자동 반영. Daemon은 별도로 실행 |
+| `npm run preview:web` | 빌드된 `dist/web`의 확인용 서버 | 먼저 `build:web` 필요. 소스 변경·환경변수 변경은 다시 빌드 |
+| `npm start -- --web-ui` | 전용 runtime·WorkNaru Daemon과 내장 UI | 먼저 전체 `build` 필요. 브라우저는 직접 열기 |
+
+일상 개발은 `npm run dev`로 시작한다. UI만 따로 실행하는 명령은 Daemon을 기동하거나 종료하지 않는다.
+
 ### 독립 실행
 
 ```powershell
@@ -36,7 +49,45 @@ npm start -- --workspace . --data-dir .worknaru-dev/paseo-v1
 
 이 경로는 Web 빌드·Vite·브라우저 없이 실행한다. 내장 UI가 필요하면 `npm run build` 후 `npm start -- --web-ui`로 시작하고 `http://127.0.0.1:4310/`을 연다. 브라우저를 자동으로 열지는 않는다.
 
-독립 실행 옵션은 `--data-dir`, `--workspace`, `--codex-path`, `--port`(기본 `4310`, `0`은 빈 포트), `--web-ui`, 반복 가능한 `--origin`, `--help`다. 별도 UI는 `--origin http://127.0.0.1:15173`처럼 명시한다. 개별 Vite 실행에서는 `VITE_WORKNARU_URL`로 해당 제품 WS 주소를 설정한다. 제품은 loopback에서 실행하며 원격 공유·접속키 옵션을 제공하지 않는다. Paseo의 전용 인증은 제품 내부에서만 사용한다.
+독립 실행 옵션은 `--data-dir`, `--workspace`, `--codex-path`, `--port`(기본 `4310`, `0`은 빈 포트), `--web-ui`, 반복 가능한 `--origin`, `--help`다. 별도 UI는 `--origin http://127.0.0.1:15173`처럼 명시한다. 제품은 loopback에서 실행하며 원격 공유·접속키 옵션을 제공하지 않는다. Paseo의 전용 인증은 제품 내부에서만 사용한다.
+
+### Daemon과 UI를 따로 실행
+
+통합 개발 실행을 Ctrl+C로 종료한 뒤, 저장소 루트의 **터미널 A**에서 Daemon을 실행한다.
+
+```powershell
+npm run build:daemon
+npm start -- --origin http://127.0.0.1:15173
+```
+
+같은 저장소의 **터미널 B**에서 UI 개발 서버를 실행하고 `http://127.0.0.1:15173/`을 연다.
+
+```powershell
+$env:VITE_WORKNARU_URL = 'ws://127.0.0.1:4310/ws'
+npm run dev:web
+```
+
+빌드된 UI를 확인하려면 터미널 B의 Vite를 종료하고 다음 명령을 실행한다. 터미널 A의 Daemon은 계속 사용한다.
+
+```powershell
+$env:VITE_WORKNARU_URL = 'ws://127.0.0.1:4310/ws'
+npm run build:web
+npm run preview:web
+```
+
+`VITE_WORKNARU_URL`은 UI 개발 서버를 시작할 때 또는 UI를 **빌드할 때** 적용된다. `preview:web` 직전에 환경변수만 바꿔도 이미 빌드한 UI의 접속 주소는 바뀌지 않는다. 환경변수를 지정하지 않은 빌드의 기본값은 UI를 제공한 주소의 `/ws`이므로, 별도 preview 서버에서는 위처럼 Daemon 주소를 넣어 빌드한다. 내장 UI의 기본 연결로 되돌리려면 터미널 B에서 `Remove-Item Env:VITE_WORKNARU_URL -ErrorAction SilentlyContinue` 후 `npm run build:web`을 실행한다.
+
+UI 포트를 바꾸면 Vite의 `--port`와 Daemon의 `--origin`을 함께 맞춘다. Daemon 포트를 바꾸면 `--port`와 `VITE_WORKNARU_URL`을 맞춘다. 두 프로세스는 각 터미널에서 Ctrl+C로 종료한다. UI 서버를 끝내도 별도로 시작한 Daemon과 AI 실행은 유지된다.
+
+### 실행 문제가 생겼을 때
+
+| 증상 | 확인할 내용 |
+| --- | --- |
+| 포트가 사용 중이거나 바인딩할 수 없음 | 통합 실행의 `--web-port`·`--daemon-port`를 다른 포트로 지정한다. 기존 프로세스는 자동 종료하지 않는다. |
+| 개발 UI가 403을 반환함 | 통합 실행이 출력한 `http://127.0.0.1:포트/` 주소를 사용한다. |
+| UI가 연결 확인 중에 머무름 | Daemon 실행 여부, 허용한 UI Origin과 실제 주소, UI의 Daemon 주소를 확인한다. 빌드된 UI의 주소 변경은 재빌드한다. |
+| Codex 실행 파일을 찾지 못함 | `--codex-path` 또는 `WORKNARU_CODEX_PATH`로 실제 `codex.exe` 경로를 지정한다. |
+| 데이터 형식·Workspace·동시 소유 오류 | 같은 데이터는 같은 Workspace의 한 실행만 사용한다. 다른 Workspace나 첫 전환에는 프로젝트 내부의 별도 빈 `--data-dir`을 지정하고 기존 자료를 보존한다. |
 
 ### 종료와 소유권
 
