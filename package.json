@@ -12,6 +12,8 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build": "npm run build:daemon && npm run build:web",
+    "build:prototype": "tsc -p tsconfig.web.json && vite build --config vite.prototype.config.ts",
+    "preview:prototype": "vite preview --config vite.prototype.config.ts --host 127.0.0.1 --port 15176 --strictPort",
     "build:web": "tsc -p tsconfig.web.json && vite build",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.web.json",
     "dev:web": "vite",

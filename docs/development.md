@@ -1,5 +1,15 @@
 # 로컬 Daemon 개발과 저장 검증
 
+## 디자인 컨셉 프로토타입
+
+`npm run build:prototype` 후 `npm run preview:prototype`을 실행하고 `http://127.0.0.1:15176`을 연다. 프로토타입은 예제 데이터만 사용하고 실제 AI·Daemon·파일 수정·설정 저장을 수행하지 않는다. 종료는 해당 터미널의 `Ctrl+C`다.
+
+Main Color, A/B, Light/Dark, 화면·상태·너비를 바꾸며 비교한다. 사용자는 이슈 #25와 연결된 대화에 선택과 수정 의견을 남긴다. ‘현재 배색’은 기존 CSS와의 비교이며 새 배색의 승인을 의미하지 않는다.
+
+별도 Vite 진입점으로 빌드하며 결과는 `.worknaru-test/design-prototype`에 생성한다. 일반 `npm run build`의 `dist/web`에는 비교 도구를 포함하지 않는다. 배색 시험은 `node --test tests/design-palette.test.mjs`, 브라우저 시험은 `npm run test:web -- tests/design-prototype.spec.mjs`다. 브라우저 시험은 별도의 loopback 시안 서버를 시작하고 종료한다. 포트 예약 충돌이 있는 환경에서는 기존 시험과 같이 `WORKNARU_TEST_WEB_PORT=15173`을 설정한다.
+
+시안과 제품 적용 기준은 [Design System](design/design-system.md)을 참고한다.
+
 - 관련 작업: [#6 첫 로컬 Daemon의 메시지 저장·재시작 조회 구현](https://github.com/NaruForge/worknaru/issues/6)
 - 제품 책임: [README](../README.md)
 - 출발 방식: [저장소 구성](design/repository-structure.md)

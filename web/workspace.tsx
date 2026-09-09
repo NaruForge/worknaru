@@ -7,7 +7,7 @@ import { AiControls } from './ai-controls.js';
 import { defaultDaemonEndpoint, developmentEndpoint, developmentKeyRequired, useDevServer } from './dev-server.js';
 import { FilePreview, fileStateLabel } from './file-approval.js';
 
-function Dialog({ title, children, close, drawer = false }: { title: string; children: ReactNode; close: () => void; drawer?: boolean }) {
+export function Dialog({ title, children, close, drawer = false }: { title: string; children: ReactNode; close: () => void; drawer?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -27,7 +27,7 @@ function Dialog({ title, children, close, drawer = false }: { title: string; chi
 }
 
 // The platform shell accepts optional navigation; Chat supplies its own list and body.
-function WorkspaceShell({ name, online, sidebar, children, connection, settings, theme, toggleTheme, listOpen, toggleList, navigationLabel, devStop }: {
+export function WorkspaceShell({ name, online, sidebar, children, connection, settings, theme, toggleTheme, listOpen, toggleList, navigationLabel, devStop }: {
   name: string; online: boolean; sidebar?: ReactNode; children: ReactNode; connection: () => void;
   theme: string; toggleTheme: () => void; listOpen?: boolean; toggleList?: () => void; navigationLabel?: string;
   settings: () => void;
