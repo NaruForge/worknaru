@@ -317,8 +317,13 @@ export class AcpRuntime {
     this.infoAbort.abort();
     await this.inspecting?.catch(() => {});
     const runs = [...this.work.keys()];
-    await Promise.all(runs.map((id) => this.cancel(id).catch(() => {})));
+    let confirmed = true;
+    await Promise.all(runs.map((id) => this.cancel(id).catch(() => { confirmed = false; })));
     await Promise.allSettled([...this.work.values()]);
-    for (const [sessionId] of this.agents) await this.stopSession(sessionId).catch(() => {});
+    for (const [sessionId] of this.agents) {
+      if (!await this.stopSession(sessionId).catch(() => false)) confirmed = false;
+    }
+    // A cancelled Run or a metadata probe may retain an unconfirmed owned Job.
+    return confirmed && !this.store.probeJob() && this.store.activeRunCount() === 0;
   }
 }

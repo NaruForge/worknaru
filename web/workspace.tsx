@@ -4,6 +4,7 @@ import type { ChatStateStore } from '../src/chat-state.js';
 import { Chat, ConversationList } from './chat.js';
 import { Icon } from './icons.js';
 import { AiControls } from './ai-controls.js';
+import { useDevServer } from './dev-server.js';
 
 function Dialog({ title, children, close, drawer = false }: { title: string; children: ReactNode; close: () => void; drawer?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -25,10 +26,11 @@ function Dialog({ title, children, close, drawer = false }: { title: string; chi
 }
 
 // The platform shell accepts optional navigation; Chat supplies its own list and body.
-function WorkspaceShell({ name, online, sidebar, children, connection, settings, theme, toggleTheme, listOpen, toggleList, navigationLabel }: {
+function WorkspaceShell({ name, online, sidebar, children, connection, settings, theme, toggleTheme, listOpen, toggleList, navigationLabel, devStop }: {
   name: string; online: boolean; sidebar?: ReactNode; children: ReactNode; connection: () => void;
   theme: string; toggleTheme: () => void; listOpen?: boolean; toggleList?: () => void; navigationLabel?: string;
   settings: () => void;
+  devStop?: ReactNode;
 }) {
   const [services, setServices] = useState(false);
   return <div className="window">
@@ -36,7 +38,7 @@ function WorkspaceShell({ name, online, sidebar, children, connection, settings,
       <button className="mobile-services" onClick={() => setServices(true)} aria-label="서비스 열기"><Icon name="grid" /></button>
       <div className="brand"><span className="mark">w</span><span>WorkNaru</span></div>
       <span className="divider" /><span className="workspace-name" title={name}><Icon name="folder" />{name}</span>
-      <span className="spacer" />
+      <span className="spacer" />{devStop}
       <button className="connection" onClick={connection}><span className={online ? 'dot' : 'dot offline'} />{online ? '연결됨' : '연결 끊김'}</button>
       <button className="theme" onClick={toggleTheme} aria-label={theme === 'dark' ? '밝은 테마' : '어두운 테마'}><Icon name={theme === 'dark' ? 'sun' : 'moon'} /></button>
     </header>
@@ -53,9 +55,10 @@ export function App({ model }: { model: ChatStateStore }) {
   const state = useSyncExternalStore(model.subscribe, model.getSnapshot);
   const [connectionOpen, setConnectionOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [endpoint, setEndpoint] = useState('ws://127.0.0.1:4310/ws');
+  const [endpoint, setEndpoint] = useState(() => document.querySelector<HTMLMetaElement>('meta[name="worknaru-dev-endpoint"]')?.content ?? 'ws://127.0.0.1:4310/ws');
   const [tokenInput, setTokenInput] = useState('');
   const credentials = useRef({ endpoint: '', token: '' });
+  const dev = useDevServer((address) => endpoint.trim() === address && tokenInput ? tokenInput : credentials.current.endpoint === address ? credentials.current.token : '');
   const [theme, setTheme] = useState(matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
   const [wide, setWide] = useState(innerWidth >= 860);
   const [expanded, setExpanded] = useState(true);
@@ -80,10 +83,13 @@ export function App({ model }: { model: ChatStateStore }) {
   const list = <ConversationList state={state} model={model} select={(id) => { void model.select(id); setDrawer(false); }} />;
   const refreshSettings = () => { void model.refreshSettings(); void model.refreshAi(); };
   const workspaceName = state.workspace?.path.split(/[\\/]/).filter(Boolean).at(-1) ?? 'Workspace';
+  const devStop = dev.enabled && <button className="dev-stop" onClick={() => void dev.check()} disabled={dev.stage !== 'idle'}>개발 서버 종료</button>;
+  if (dev.stage === 'stopped') return <main className="dev-stopped"><span className="mark">w</span><h1>종료되었습니다.</h1><p>대화와 설정은 보존했습니다. 이 탭을 닫아도 됩니다.</p><p className="muted">다시 시작하려면 프로젝트 폴더에서 npm run dev를 실행하세요.</p></main>;
   return <>
     <WorkspaceShell name={workspaceName} online={state.connection === 'online'} sidebar={wide && expanded ? list : undefined}
       theme={theme} toggleTheme={() => setTheme(theme === 'light' ? 'dark' : 'light')} connection={() => setConnectionOpen(true)}
       settings={() => { setSettingsOpen(true); refreshSettings(); }}
+      devStop={devStop}
       listOpen={wide ? expanded : drawer} navigationLabel="대화 목록 열기 또는 접기" toggleList={() => wide ? setExpanded(!expanded) : setDrawer(!drawer)}>
       <Chat state={state} model={model} reconnect={reconnect} />
     </WorkspaceShell>
@@ -116,6 +122,17 @@ export function App({ model }: { model: ChatStateStore }) {
         {state.error && <p role="alert" className="error-text">{state.error}</p>}
         <button className="primary" type="submit" disabled={state.connection === 'connecting'}>{state.connection === 'connecting' ? '연결 확인 중…' : '연결'}</button>
       </form>
+      {devStop}
+    </Dialog>}
+    {dev.enabled && dev.stage !== 'idle' && <Dialog title="개발 서버 종료" close={() => { if (!['checking', 'stopping'].includes(dev.stage)) dev.dismiss(); }}>
+      {dev.stage === 'key' && <form className="connection-form" onSubmit={(event) => { event.preventDefault(); void dev.check(dev.key); }}>
+        <p>이번 실행의 연결 키를 붙여넣으세요.</p><label>종료용 연결 키<input type="password" autoComplete="off" value={dev.key} onChange={(event) => dev.setKey(event.target.value)} required /></label>
+        <button type="submit" className="primary">종료 확인</button>
+      </form>}
+      {dev.stage === 'checking' && <p role="status">진행 중인 AI 응답을 확인하고 있습니다…</p>}
+      {dev.stage === 'confirm' && <><p>진행 중인 AI 응답이 {dev.activeRuns}개 있습니다. 중단하고 개발 서버를 종료할까요?</p><p className="muted small">다른 탭의 응답도 중단됩니다. 저장된 기록은 남지만, 중단한 대화의 후속 질문은 새 대화에서 시작해야 합니다. 보내지 않은 초안은 저장되지 않습니다.</p><div className="dev-actions"><button onClick={dev.dismiss}>계속 점검하기</button><button className="primary" onClick={() => void dev.confirm()}>응답 중단 후 종료</button></div></>}
+      {dev.stage === 'stopping' && <p role="status">AI 프로세스와 개발 서버를 종료하고 있습니다…</p>}
+      {dev.stage === 'error' && <><p className="error-text" role="alert">{dev.error}</p><button onClick={dev.dismiss}>닫기</button></>}
     </Dialog>}
   </>;
 }

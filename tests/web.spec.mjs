@@ -1,6 +1,9 @@
 import { test as base, expect } from '@playwright/test';
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
+import { createServer } from 'node:net';
+import { once } from 'node:events';
+import { startDevServers } from '../scripts/dev.mjs';
 import { fixture, launch, projectRoot, connect, createSession, mutation } from './helpers.mjs';
 const origin = `http://127.0.0.1:${process.env.WORKNARU_TEST_WEB_PORT ?? 5173}`;
 
@@ -15,6 +18,82 @@ const test = base.extend({
     await use(daemon);
   },
 });
+
+async function developmentServer(records, acp = false) {
+  const socket = createServer();
+  socket.listen(0, '127.0.0.1'); await once(socket, 'listening');
+  const port = socket.address().port;
+  await new Promise((resolve) => socket.close(resolve));
+  const server = await startDevServers({ webPort: port, daemonOptions: {
+    dataDirectory: records.data, workspaceDirectory: records.workspace, token: records.token, port: 0,
+    ...(acp ? { acp: { command: { executable: process.execPath, arguments: [join(projectRoot, 'tests/fake-acp.mjs')], cwd: records.workspace,
+      env: { ...process.env, TEST_AGENT_LOG: join(records.root, 'agent.log'), TEMP: records.root, TMP: records.root },
+    } } } : {}),
+  } });
+  records.cleanups.push(() => server.close());
+  return server;
+}
+
+test('dev UI stops other-tab runs after confirmation and preserves history on restart', async ({ page, records }) => {
+  let server = await developmentServer(records, true);
+  await page.goto(server.origin);
+  await expect(page.getByLabel('Daemon 주소')).toHaveValue(server.daemon.url);
+  await page.getByLabel('연결 키', { exact: true }).fill(records.token);
+  await page.getByRole('button', { name: '연결', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await newSession(page);
+  await send(page, '개발 종료 뒤에도 남을 기록');
+  await expect(page.locator('.run-state')).toHaveText('응답 완료');
+  const other = await connect(records, server.daemon);
+  const session = await createSession(other, server.daemon.workspace.workspaceId, '다른 탭의 대화');
+  await other.call('runs.start', { sessionId: session.sessionId, text: 'wait' }, mutation(other));
+  await page.setViewportSize({ width: 320, height: 850 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.getByRole('button', { name: '개발 서버 종료', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '개발 서버 종료' });
+  await expect(dialog).toContainText('진행 중인 AI 응답이 1개');
+  await page.screenshot({ path: '.worknaru-test/dev-stop-mobile.png' });
+  await dialog.getByRole('button', { name: '계속 점검하기' }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '연결됨', exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.getByRole('button', { name: '개발 서버 종료', exact: true }).click();
+  await expect(dialog).toContainText('진행 중인 AI 응답이 1개');
+  await page.screenshot({ path: '.worknaru-test/dev-stop-desktop.png' });
+  await dialog.getByRole('button', { name: '응답 중단 후 종료' }).click();
+  await expect(page.getByRole('heading', { name: '종료되었습니다.' })).toBeVisible({ timeout: 20_000 });
+  expect(await server.close()).toBe(true);
+  await page.screenshot({ path: '.worknaru-test/dev-stopped.png' });
+  await expect(fetch(server.origin)).rejects.toThrow();
+  server = await developmentServer(records);
+  await page.goto(server.origin);
+  await page.getByLabel('연결 키', { exact: true }).fill(records.token);
+  await page.getByRole('button', { name: '연결', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.locator('.conversation-list button').filter({ hasText: '대화 1' }).click();
+  await expect(page.getByRole('article', { name: '내 메시지' })).toContainText('개발 종료 뒤에도 남을 기록');
+});
+
+test('dev UI can stop before connecting; closing a tab does not stop the servers', async ({ page, records, context }) => {
+  const server = await developmentServer(records);
+  const tab = await context.newPage();
+  await tab.goto(server.origin);
+  await tab.close();
+  expect((await fetch(server.origin)).ok).toBe(true);
+  await page.goto(server.origin);
+  await page.getByRole('dialog', { name: 'Workspace 연결' }).getByRole('button', { name: '개발 서버 종료' }).click();
+  const dialog = page.getByRole('dialog', { name: '개발 서버 종료' });
+  await expect(page.getByLabel('종료용 연결 키')).toBeVisible();
+  await page.getByLabel('종료용 연결 키').fill('wrong-key');
+  await dialog.getByRole('button', { name: '종료 확인' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('이번 개발 실행의 연결 키가 필요합니다.');
+  await dialog.getByRole('button', { name: '닫기', exact: true }).click();
+  await page.getByLabel('연결 키', { exact: true }).fill(records.token);
+  await page.getByRole('dialog', { name: 'Workspace 연결' }).getByRole('button', { name: '개발 서버 종료' }).click();
+  await expect(page.getByRole('heading', { name: '종료되었습니다.' })).toBeVisible();
+  expect(await server.close()).toBe(true);
+});
+
 async function login(page, daemon, records) {
   await page.goto(origin);
   await page.getByLabel('Daemon 주소').fill(daemon.url);
@@ -36,6 +115,7 @@ test('actual daemon text flow, drafts, IME, cancellation and responsive modal fo
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await login(page, daemon, records);
+  await expect(page.getByRole('button', { name: '개발 서버 종료', exact: true })).toHaveCount(0);
   await newSession(page);
   const first = await page.locator('.conversation-list [aria-current=true]').innerText();
   await send(page, '고객 인터뷰 질문 세 가지를 정리해 주세요.');

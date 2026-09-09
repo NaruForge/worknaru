@@ -194,17 +194,18 @@ export async function startDaemon(options: DaemonOptions) {
     throw error;
   }
   const port = (server.address() as AddressInfo).port;
-  let closing: Promise<void> | undefined;
+  let closing: Promise<boolean> | undefined;
   return {
     url: `ws://127.0.0.1:${port}/ws`,
     workspace: store.workspace,
     storeEpoch: store.epoch,
     daemonInstanceId: instanceId,
-    close(): Promise<void> {
+    activeRunCount: () => store.activeRunCount(),
+    close(): Promise<boolean> {
       closing ??= (async () => {
         try {
           stopping = true;
-          await runtime?.close();
+          const confirmed = runtime ? await runtime.close().catch(() => false) : true;
           const serverClosed = new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
           for (const socket of wss.clients) socket.terminate();
           // Include partial HTTP requests and rejected upgrades, which wss does not own.
@@ -213,6 +214,7 @@ export async function startDaemon(options: DaemonOptions) {
             serverClosed,
             new Promise<void>((resolve, reject) => wss.close((error) => error ? reject(error) : resolve())),
           ]);
+          return confirmed;
         } finally {
           store.close();
           token.fill(0);
