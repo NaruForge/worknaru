@@ -1,8 +1,7 @@
-// Review-only candidate coefficients. Product adoption requires the user's choice.
+// A concept selected by the user in issue #25 (2026-09-09).
 // Color space definitions: https://www.w3.org/TR/css-color-4/#color-conversion-code
 type RGB = [number, number, number];
 export type Mode = 'light' | 'dark';
-export type Concept = 'A' | 'B';
 export const DEFAULT_COLOR = '#176b56';
 export const validColor = (value: string) => /^#[\da-f]{6}$/i.test(value);
 const linear = (x: number) => x <= .04045 ? x / 12.92 : ((x + .055) / 1.055) ** 2.4;
@@ -32,10 +31,10 @@ export function fromLch(light: number, chroma: number, hue: number): string {
   for (let i = 0; i < 22 && low !== high; i++) { const mid = (low + high) / 2; if (inGamut(mid)) low = mid; else high = mid; }
   return '#' + convert(low).map(x => Math.round(Math.max(0, Math.min(1, gamma(x))) * 255).toString(16).padStart(2, '0')).join('');
 }
-export function palette(input: string, mode: Mode, concept: Concept) {
+export function palette(input: string, mode: Mode) {
   const main = validColor(input) ? input.toLowerCase() : DEFAULT_COLOR;
   const [sourceL, sourceC, h] = toLch(main), dark = mode === 'dark';
-  const chroma = Math.min(sourceC, .18), tintC = Math.min(sourceC, concept === 'A' ? .004 : .027);
+  const chroma = Math.min(sourceC, .18), tintC = Math.min(sourceC, .004);
   const color = (l: number, c = tintC, hue = h) => fromLch(l, c, hue);
   const canvas = color(dark ? .20 : .992), soft = color(dark ? .25 : .962), selected = color(dark ? .31 : .923, Math.min(sourceC, .045));
   const backgrounds = [canvas, soft, selected];
@@ -58,7 +57,4 @@ export function palette(input: string, mode: Mode, concept: Concept) {
   return { main, canvas, soft, selected, accent, ink, muted, on, warning, warningBg, danger, success,
     border: color(dark ? .37 : .86), controlBorder: readable(dark ? .62 : .58, tintC, h, backgrounds, 3),
     overlay: dark ? '#00000099' : '#18202055', shadow: dark ? '#00000030' : '#00000012' };
-}
-export function cssPalette(p: ReturnType<typeof palette>): Record<string, string> {
-  return { '--surface': p.canvas, '--soft': p.soft, '--ink': p.ink, '--muted': p.muted, '--line': p.border, '--accent': p.accent, '--tint': p.selected, '--on': p.on, '--amber': p.warning, '--amber-bg': p.warningBg, '--danger': p.danger, '--success': p.success, '--shadow': p.shadow, '--control-border': p.controlBorder, '--overlay': p.overlay };
 }

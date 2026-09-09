@@ -4,6 +4,8 @@ Repository work와 중요한 architecture decision을 다루기 전에 [프로�
 
 구현 작업을 시작할 때는 [로컬 개발 안내](docs/development.md)와 [package.json](package.json)의 scripts에서 실행 방법과 검증 명령을 확인하세요.
 
+UI를 만들거나 바꿀 때는 [Design System](docs/design/design-system.md)의 공통 컴포넌트·배색·사용자 시안 확인 기준을 따르세요.
+
 ## 초기 개발 규칙
 
 - 현재 작업에 필요한 범위만 변경하세요. 향후 기능을 예상해 폴더, 패키지, 추상화나 공통 계층을 미리 만들지 마세요.
