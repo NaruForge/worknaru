@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import type { ChatStateStore } from '../src/chat-state.js';
 import { Chat, ConversationList } from './chat.js';
 import { Icon } from './icons.js';
+import { AiControls } from './ai-controls.js';
 
 function Dialog({ title, children, close, drawer = false }: { title: string; children: ReactNode; close: () => void; drawer?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -13,7 +14,7 @@ function Dialog({ title, children, close, drawer = false }: { title: string; chi
   }, []);
   return <dialog ref={ref} className={drawer ? 'drawer' : 'dialog'} aria-label={title} onCancel={(event) => { event.preventDefault(); close(); }} onKeyDown={(event) => {
     if (event.key !== 'Tab') return;
-    const focusable = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"]')].filter((element) => element.getClientRects().length > 0);
+    const focusable = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"]')].filter((element) => element.getClientRects().length > 0);
     const first = focusable[0]; const last = focusable.at(-1);
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
@@ -24,9 +25,10 @@ function Dialog({ title, children, close, drawer = false }: { title: string; chi
 }
 
 // The platform shell accepts optional navigation; Chat supplies its own list and body.
-function WorkspaceShell({ name, online, sidebar, children, connection, theme, toggleTheme, listOpen, toggleList, navigationLabel }: {
+function WorkspaceShell({ name, online, sidebar, children, connection, settings, theme, toggleTheme, listOpen, toggleList, navigationLabel }: {
   name: string; online: boolean; sidebar?: ReactNode; children: ReactNode; connection: () => void;
   theme: string; toggleTheme: () => void; listOpen?: boolean; toggleList?: () => void; navigationLabel?: string;
+  settings: () => void;
 }) {
   const [services, setServices] = useState(false);
   return <div className="window">
@@ -39,17 +41,18 @@ function WorkspaceShell({ name, online, sidebar, children, connection, theme, to
       <button className="theme" onClick={toggleTheme} aria-label={theme === 'dark' ? '밝은 테마' : '어두운 테마'}><Icon name={theme === 'dark' ? 'sun' : 'moon'} /></button>
     </header>
     <div className="layout">
-      <nav className="rail" aria-label="서비스"><button className="selected" aria-current="page" onClick={() => {}}><Icon name="chat" />Chat</button><span className="spacer" /><button onClick={connection}><Icon name="settings" />연결</button></nav>
+      <nav className="rail" aria-label="서비스"><button className="selected" aria-current="page" onClick={() => {}}><Icon name="chat" />Chat</button><span className="spacer" /><button onClick={settings} aria-label="Settings"><Icon name="settings" />설정</button></nav>
       {sidebar && <aside className="sidebar" aria-label="대화 목록">{sidebar}</aside>}
       <main className="main"><div className="module-tools">{toggleList && <button onClick={toggleList} aria-label={navigationLabel ?? '목록 열기 또는 접기'} aria-expanded={listOpen}><Icon name="list" /></button>}<span>기본 제공 Module</span></div>{children}</main>
     </div>
-    {services && <Dialog title="서비스" close={() => setServices(false)} drawer><button className="service-entry selected" onClick={() => setServices(false)}><Icon name="chat" />Chat</button><button className="service-entry" onClick={() => { setServices(false); connection(); }}><Icon name="settings" />연결 설정</button></Dialog>}
+    {services && <Dialog title="서비스" close={() => setServices(false)} drawer><button className="service-entry selected" onClick={() => setServices(false)}><Icon name="chat" />Chat</button><button className="service-entry" onClick={() => { setServices(false); settings(); }}><Icon name="settings" />Settings</button></Dialog>}
   </div>;
 }
 
 export function App({ model }: { model: ChatStateStore }) {
   const state = useSyncExternalStore(model.subscribe, model.getSnapshot);
   const [connectionOpen, setConnectionOpen] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [endpoint, setEndpoint] = useState('ws://127.0.0.1:4310/ws');
   const [tokenInput, setTokenInput] = useState('');
   const credentials = useRef({ endpoint: '', token: '' });
@@ -75,14 +78,35 @@ export function App({ model }: { model: ChatStateStore }) {
     else setConnectionOpen(true);
   };
   const list = <ConversationList state={state} model={model} select={(id) => { void model.select(id); setDrawer(false); }} />;
+  const refreshSettings = () => { void model.refreshSettings(); void model.refreshAi(); };
   const workspaceName = state.workspace?.path.split(/[\\/]/).filter(Boolean).at(-1) ?? 'Workspace';
   return <>
     <WorkspaceShell name={workspaceName} online={state.connection === 'online'} sidebar={wide && expanded ? list : undefined}
       theme={theme} toggleTheme={() => setTheme(theme === 'light' ? 'dark' : 'light')} connection={() => setConnectionOpen(true)}
+      settings={() => { setSettingsOpen(true); refreshSettings(); }}
       listOpen={wide ? expanded : drawer} navigationLabel="대화 목록 열기 또는 접기" toggleList={() => wide ? setExpanded(!expanded) : setDrawer(!drawer)}>
       <Chat state={state} model={model} reconnect={reconnect} />
     </WorkspaceShell>
     {!wide && drawer && <Dialog title="대화 목록" close={() => setDrawer(false)} drawer>{list}</Dialog>}
+    {settingsOpen && <Dialog title="Settings" close={() => setSettingsOpen(false)}>
+      <div className="settings-content">
+        <section><h2>Workspace 연결</h2><p className="muted small">{state.connection === 'online' ? '연결됨' : '연결 끊김'} · {state.endpoint || endpoint}</p>
+          <button className="settings-action" onClick={() => { setSettingsOpen(false); setConnectionOpen(true); }}>연결 설정 변경</button></section>
+        <section><div className="settings-section-heading"><h2>AI 인증</h2><button className="settings-action" disabled={state.connection !== 'online' || state.busy || !!state.pending || state.aiLoading || state.settingsLoading} onClick={refreshSettings}>{state.aiLoading || state.settingsLoading ? '확인 중…' : '상태 새로고침'}</button></div>
+          <p className="auth-status">{!state.ready?.aiExecution ? 'AI 연결 비활성' : state.aiLoading ? '인증 상태 확인 중…' : state.aiInfo ? ({ chatgpt: 'ChatGPT 로그인 정보 확인됨', apiKey: 'API 키 인증 정보 확인됨', other: '제공자 인증 정보 확인됨', signedOut: '로그인 정보 없음' })[state.aiInfo.authentication] : '인증 상태 확인 필요'}</p>
+          <p className="muted small">기존 Codex CLI 로그인 정보를 사용합니다. WorkNaru 연결 키와 별개의 인증입니다.</p>
+          {state.aiInfo?.authentication === 'signedOut' && <p className="muted small">Codex CLI에서 로그인한 뒤 Daemon을 다시 실행하세요.</p>}
+          {state.aiError && <p className="error-text small" role="alert">{state.aiError}</p>}
+        </section>
+        <section><h2>새 대화 기본값</h2><p className="muted small">선택하면 저장됩니다. 기존 대화의 설정은 유지됩니다.</p>
+          <AiControls defaults info={state.aiInfo} selection={state.settings?.selection} disabled={state.connection !== 'online' || state.busy || !!state.pending || !!state.settingsLoading || !state.settings?.storageAvailable} change={(selection) => void model.configure(selection)} />
+          {state.settingsError && <p className="error-text small" role="alert">{state.settingsError}</p>}
+        </section>
+        <section><h2>Permission</h2><p className="muted small">텍스트 대화 · 도구 실행 미지원</p></section>
+        {state.pending && <p role="status">{state.busy ? '접수 확인 중…' : '접수 여부 확인이 필요합니다.'}{!state.busy && <button className="settings-action" onClick={() => void model.resolvePending()}>접수 확인</button>}</p>}
+        {state.error && <p className="error-text small" role="alert">{state.error}</p>}
+      </div>
+    </Dialog>}
     {connectionOpen && <Dialog title="Workspace 연결" close={() => setConnectionOpen(false)}>
       <p className="muted">실행 중인 로컬 Daemon에 연결합니다.</p>
       <form onSubmit={(event) => { event.preventDefault(); void connect(); }} className="connection-form">

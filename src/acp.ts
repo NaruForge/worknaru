@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { Readable, Transform, Writable } from 'node:stream';
+import { z } from 'zod';
 import { client, ndJsonStream, PROTOCOL_VERSION } from '@agentclientprotocol/sdk';
 import type { ClientConnection } from '@agentclientprotocol/sdk';
 import { AppError, publicError } from './protocol.js';
@@ -12,9 +13,21 @@ import { isFinal, RecordStore } from './store.js';
 import type { Run } from './store.js';
 import { launchAgentJob, stopAgentJob, withTimeout } from './agent-process.js';
 import type { AgentCommand } from './agent-process.js';
+import { inspectCodex } from './codex-info.js';
+import type { AiInfo, AiSelection } from './ai-settings.js';
 
-type Agent = { process: Awaited<ReturnType<typeof launchAgentJob>>; connection: ClientConnection; providerId: string; activeRun?: string };
-export type AcpOptions = { codexPath?: string; command?: AgentCommand };
+type ModelConfiguration = { selection: AiSelection; models: string[]; efforts: string[] };
+type Agent = { process: Awaited<ReturnType<typeof launchAgentJob>>; connection: ClientConnection; providerId: string; activeRun?: string; configuration: ModelConfiguration };
+export type AcpOptions = { codexPath?: string; command?: AgentCommand; requiredSelection?: AiSelection };
+
+function modelConfiguration(response: unknown): ModelConfiguration {
+  const result = z.object({ configOptions: z.array(z.object({ id: z.string() }).passthrough()) }).safeParse(response);
+  const option = z.object({ currentValue: z.string(), options: z.array(z.object({ value: z.string() })) });
+  const model = option.safeParse(result.success ? result.data.configOptions.find((item) => item.id === 'model') : undefined);
+  const effort = option.safeParse(result.success ? result.data.configOptions.find((item) => item.id === 'reasoning_effort') : undefined);
+  if (!model.success || !effort.success) throw new AppError('MODEL_UNCONFIRMED', '적용 모델을 확인하지 못해 질문을 보내지 않았습니다.');
+  return { selection: { model: model.data.currentValue, reasoningEffort: effort.data.currentValue }, models: model.data.options.map((item) => item.value), efforts: effort.data.options.map((item) => item.value) };
+}
 
 // Only child process configuration; never change the host's environment or CLI home.
 function codexCommand(projectRoot: string, directory: string, cwd: string, codexPath?: string): AgentCommand {
@@ -53,12 +66,22 @@ export class AcpRuntime {
   private readonly cancellations = new Map<string, Promise<void>>();
   private stopping = false;
   private readonly command: AgentCommand;
+  private readonly infoAbort = new AbortController();
+  private info?: AiInfo;
+  private inspecting?: Promise<AiInfo>;
+  private requiredSelection?: AiSelection;
 
   constructor(private store: RecordStore, projectRoot: string, directory: string, options: AcpOptions, private changed: (run: Run) => void) {
     this.command = options.command ?? codexCommand(projectRoot, directory, store.workspace.path, options.codexPath);
+    this.requiredSelection = options.requiredSelection;
   }
 
   async recover() {
+    const probe = this.store.probeJob();
+    if (probe) {
+      if (!await stopAgentJob(probe, this.command.env)) throw new AppError('PROCESS_CLEANUP_UNKNOWN', 'AI 상태 조회 프로세스 정리를 확인하지 못했습니다.');
+      this.store.setProbeJob(null);
+    }
     for (const session of this.store.recoverySessions()) {
       const confirmed = await stopAgentJob(session.jobName, this.command.env);
       this.store.recoverSession(session.sessionId, confirmed);
@@ -78,6 +101,28 @@ export class AcpRuntime {
 
   emit(runId: string) { this.changed(this.store.run(runId)); }
 
+  metadata(): Promise<AiInfo> {
+    if (this.stopping) return Promise.reject(new AppError('DAEMON_STOPPING', '데몬을 종료하고 있습니다.'));
+    if (this.inspecting) return this.inspecting;
+    if (this.info && Date.now() - Date.parse(this.info.checkedAt) < 30_000) return Promise.resolve(this.info);
+    const operation = inspectCodex(this.command, this.store, this.infoAbort.signal).then((info) => { this.info = info; return info; });
+    this.inspecting = operation;
+    void operation.finally(() => { this.inspecting = undefined; }).catch(() => {});
+    return operation;
+  }
+
+  validateSelection = (selection: AiSelection) => {
+    if (!this.info) throw new AppError('AI_CATALOG_REQUIRED', 'AI 모델 목록을 먼저 확인하세요.');
+    if (!this.info.models.some((model) => model.id === selection.model && model.efforts.includes(selection.reasoningEffort)))
+      throw new AppError('MODEL_UNSUPPORTED', '지원하는 모델과 추론 강도를 선택하세요.');
+    this.checkRequired(selection);
+  };
+
+  private checkRequired(selection: AiSelection) {
+    if (this.requiredSelection && (selection.model !== this.requiredSelection.model || selection.reasoningEffort !== this.requiredSelection.reasoningEffort))
+      throw new AppError('TEST_MODEL_REQUIRED', '실제 검증에 허용된 모델과 추론 강도만 사용할 수 있습니다.');
+  }
+
   private connect(sessionId: string): Promise<Agent> {
     const existing = this.agents.get(sessionId);
     if (existing && !existing.connection.signal.aborted) return Promise.resolve(existing);
@@ -94,11 +139,15 @@ export class AcpRuntime {
   private async openAgent(sessionId: string, signal: AbortSignal): Promise<Agent> {
     signal.throwIfAborted();
     const binding = this.store.binding(sessionId);
+    const selection = this.store.selection(sessionId);
+    this.checkRequired(selection);
     if (binding.unavailable) throw new AppError('SESSION_UNAVAILABLE', 'AI 대화를 다시 연결할 수 없습니다. 새 대화를 시작하세요.');
     const jobName = `Local\\WorkNaru-${randomUUID()}`;
     // Keep the provider identity durable even if startup/resume is interrupted.
     this.store.setAgent(sessionId, jobName, binding.providerSessionId);
-    const process = await launchAgentJob(jobName, this.command, signal);
+    const config = JSON.parse(this.command.env.CODEX_CONFIG ?? '{}') as Record<string, unknown>;
+    const command = { ...this.command, env: { ...this.command.env, CODEX_CONFIG: JSON.stringify({ ...config, model: selection.model, model_reasoning_effort: selection.reasoningEffort }) } };
+    const process = await launchAgentJob(jobName, command, signal);
     let agent: Agent | undefined;
     // Bound incomplete NDJSON frames before the SDK buffers/parses them.
     let frameBytes = 0;
@@ -139,13 +188,15 @@ export class AcpRuntime {
       const initialized = await withTimeout(connection.agent.request('initialize', { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {}, clientInfo: { name: 'worknaru', version: '0.0.0' } }), 30_000);
       if (initialized.protocolVersion !== PROTOCOL_VERSION) throw new AppError('ACP_VERSION_MISMATCH', '에이전트 ACP 버전을 사용할 수 없습니다.');
       let providerId = binding.providerSessionId;
+      let configuration: ModelConfiguration;
       const params = { cwd: this.store.workspace.path, mcpServers: [] };
       if (providerId) {
         const capabilities = initialized.agentCapabilities;
         const method = capabilities?.sessionCapabilities?.resume ? 'session/resume' : capabilities?.loadSession ? 'session/load' : undefined;
         if (!method) throw new AppError('SESSION_RESUME_UNSUPPORTED', '연결한 에이전트는 기존 대화 재개를 지원하지 않습니다.');
         try {
-          await withTimeout(connection.agent.request(method, { ...params, sessionId: providerId }), 30_000, 'SESSION_RESUME_TIMEOUT');
+          const session = await withTimeout(connection.agent.request(method, { ...params, sessionId: providerId }), 30_000, 'SESSION_RESUME_TIMEOUT');
+          configuration = modelConfiguration(session);
         } catch (error) {
           if (error instanceof AppError) throw error;
           throw new AppError('SESSION_RESUME_FAILED', '기존 AI 대화를 불러오지 못했습니다. 저장된 기록은 유지됩니다.');
@@ -153,10 +204,11 @@ export class AcpRuntime {
       } else {
         const session = await withTimeout(connection.agent.request('session/new', { cwd: this.store.workspace.path, mcpServers: [] }), 30_000);
         providerId = session.sessionId;
+        configuration = modelConfiguration(session);
       }
       signal.throwIfAborted();
       this.store.setAgent(sessionId, jobName, providerId);
-      agent = { process, connection, providerId };
+      agent = { process, connection, providerId, configuration };
       this.agents.set(sessionId, agent);
       return agent;
     } catch (error) {
@@ -171,6 +223,15 @@ export class AcpRuntime {
       let run = this.store.run(runId);
       if (run.state === 'cancelling' || this.stopping) { await this.cancel(runId); return; }
       const agent = await this.connect(run.sessionId);
+      const selection = this.store.selection(run.sessionId);
+      this.checkRequired(selection);
+      if (!agent.configuration.models.includes(selection.model)) throw new AppError('MODEL_UNSUPPORTED', '선택한 모델을 제공자가 지원하지 않습니다.');
+      // Re-confirm every prompt, including unchanged selections on an existing connection.
+      agent.configuration = modelConfiguration(await withTimeout(agent.connection.agent.request('session/set_config_option', { sessionId: agent.providerId, configId: 'model', value: selection.model }), 30_000));
+      if (!agent.configuration.efforts.includes(selection.reasoningEffort)) throw new AppError('MODEL_UNSUPPORTED', '선택한 추론 강도를 제공자가 지원하지 않습니다.');
+      agent.configuration = modelConfiguration(await withTimeout(agent.connection.agent.request('session/set_config_option', { sessionId: agent.providerId, configId: 'reasoning_effort', value: selection.reasoningEffort }), 30_000));
+      if (agent.configuration.selection.model !== selection.model || agent.configuration.selection.reasoningEffort !== selection.reasoningEffort)
+        throw new AppError('MODEL_UNCONFIRMED', '적용 모델을 확인하지 못해 질문을 보내지 않았습니다.');
       run = this.store.run(runId);
       if (run.state !== 'running' || this.stopping) { await this.cancel(runId); return; }
       const text = this.store.claimRun(runId);
@@ -253,6 +314,8 @@ export class AcpRuntime {
 
   async close() {
     this.stopping = true;
+    this.infoAbort.abort();
+    await this.inspecting?.catch(() => {});
     const runs = [...this.work.keys()];
     await Promise.all(runs.map((id) => this.cancel(id).catch(() => {})));
     await Promise.allSettled([...this.work.values()]);

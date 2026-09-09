@@ -1,5 +1,7 @@
 // Browser-compatible platform transport. No UI or Node runtime imports.
 import { z } from 'zod';
+import { aiInfoSchema, aiSettingsSchema } from './ai-settings.js';
+import type { AiSelection } from './ai-settings.js';
 
 const id = z.uuid();
 const seq = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -7,11 +9,13 @@ export const runSchema = z.object({
   runId: id, sessionId: id, state: z.enum(['running', 'cancelling', 'completed', 'cancelled', 'failed']),
   delivery: z.enum(['not_attempted', 'attempting']), revision: seq, text: z.string(),
   errorCode: z.string().nullable(), stopReason: z.string().nullable(), createdAt: z.string(), storageAvailable: z.boolean(),
+  model: z.string().nullable().default(null), reasoningEffort: z.string().nullable().default(null), modelConfirmed: z.number().int().min(0).max(1).default(0),
 });
 const sessionSchema = z.object({
   sessionId: id, workspaceId: id, title: z.string(), seq, createdAt: z.string(),
   aiUnavailable: z.number().int().min(0).max(1), latestRunId: id.nullable(),
   latestRunState: z.enum(['running', 'cancelling', 'completed', 'cancelled', 'failed']).nullable(), storageAvailable: z.boolean(),
+  model: z.string().nullable().default(null), reasoningEffort: z.string().nullable().default(null),
 });
 const messageSchema = z.object({
   messageId: id, sessionId: id, seq, text: z.string(), role: z.enum(['user', 'assistant']), runId: id.nullable(), createdAt: z.string(),
@@ -19,12 +23,14 @@ const messageSchema = z.object({
 const workspaceSchema = z.object({ workspaceId: id, path: z.string() });
 const runReceipt = z.object({ accepted: z.literal(true), requestId: z.string(), run: runSchema });
 const sessionReceipt = z.object({ accepted: z.literal(true), requestId: z.string(), session: sessionSchema });
+const settingsReceipt = z.object({ accepted: z.literal(true), requestId: z.string(), settings: aiSettingsSchema });
 const readySchema = z.object({
   type: z.literal('ready'), protocolMajor: z.literal(1), daemonInstanceId: id, storeEpoch: id,
   capabilities: z.array(z.string()), aiExecution: z.boolean(),
   limits: z.object({ maxTextBytes: z.number().int().positive().max(16_384) }),
 });
 const results = {
+  'ai.get': aiInfoSchema, 'settings.get': aiSettingsSchema, 'settings.update': settingsReceipt, 'sessions.configure': sessionReceipt,
   'workspaces.get': workspaceSchema,
   'sessions.create': sessionReceipt,
   'sessions.get': sessionSchema,
@@ -34,10 +40,12 @@ const results = {
   'runs.get': runSchema, 'runs.watch': runSchema, 'runs.unwatch': runSchema,
   'requests.get': z.discriminatedUnion('found', [
     z.object({ storeEpoch: id, found: z.literal(false) }),
-    z.object({ storeEpoch: id, found: z.literal(true), result: z.union([runReceipt, sessionReceipt]) }),
+    z.object({ storeEpoch: id, found: z.literal(true), result: z.union([runReceipt, sessionReceipt, settingsReceipt]) }),
   ]),
 };
 type Params = {
+  'ai.get': Record<string, never>; 'settings.get': Record<string, never>;
+  'settings.update': { selection: AiSelection }; 'sessions.configure': { sessionId: string; selection: AiSelection };
   'workspaces.get': Record<string, never>;
   'sessions.create': { workspaceId: string; title: string };
   'sessions.get': { sessionId: string };
@@ -128,7 +136,7 @@ export class WebClient {
     if (!this.ready.capabilities.includes(method)) return Promise.reject(new ClientError('METHOD_NOT_SUPPORTED', '연결한 Daemon에서 지원하지 않는 기능입니다.'));
     const callId = crypto.randomUUID();
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.pending.delete(callId); reject(new ClientError('TIMEOUT', '응답 확인 시간이 지났습니다. 접수 여부를 확인하세요.')); }, 10_000);
+      const timer = setTimeout(() => { this.pending.delete(callId); reject(new ClientError('TIMEOUT', '응답 확인 시간이 지났습니다. 접수 여부를 확인하세요.')); }, method === 'ai.get' ? 60_000 : 10_000);
       this.pending.set(callId, { schema: results[method], resolve, reject, timer });
       try { socket.send(JSON.stringify({ type: 'request', callId, method, params, ...identity })); }
       catch { clearTimeout(timer); this.pending.delete(callId); reject(new ClientError('DISCONNECTED', '전송 결과를 확인할 수 없습니다.')); }

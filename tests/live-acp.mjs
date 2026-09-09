@@ -5,10 +5,10 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { startDaemon } from '../dist/daemon.js';
 import { connect, createSession, fixture, mutation, projectRoot } from './helpers.mjs';
 
-test('real Codex ACP follow-up resumes context across daemon restart', async (t) => {
+test('real Codex ACP follow-up resumes context across daemon restart', { skip: !process.env.WORKNARU_CODEX_PATH }, async (t) => {
   const f = fixture(t);
   const options = { projectRoot, dataDirectory: f.data, workspaceDirectory: f.workspace, token: f.token,
-    acp: { codexPath: process.env.WORKNARU_CODEX_PATH },
+    acp: { codexPath: process.env.WORKNARU_CODEX_PATH, requiredSelection: { model: 'gpt-5.6-luna', reasoningEffort: 'low' } },
   };
   let daemon = await startDaemon(options);
   f.cleanups.push(() => daemon.close());
@@ -34,6 +34,9 @@ test('real Codex ACP follow-up resumes context across daemon restart', async (t)
       await delay(200);
     }
     assert.equal(run.state, 'completed', JSON.stringify(run));
+    assert.equal(run.model, 'gpt-5.6-luna');
+    assert.equal(run.reasoningEffort, 'low');
+    assert.equal(run.modelConfirmed, 1);
     assert.equal(run.text.trim(), 'WORKNARU_OK');
     assert.ok(client.events.some((event) => event.run.runId === runId && event.run.text.includes('WORKNARU_OK')));
   }

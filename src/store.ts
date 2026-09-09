@@ -5,18 +5,20 @@ import { z } from 'zod';
 import { AppError, MAX_PAGE_BYTES, MAX_TEXT_BYTES } from './protocol.js';
 import type { Mutation, Request } from './protocol.js';
 import { validateDataFiles, workspacePath } from './paths.js';
+import { INITIAL_AI_SELECTION } from './ai-settings.js';
+import type { AiSelection } from './ai-settings.js';
 
 const APPLICATION_ID = 0x574e4152;
 const PRINCIPAL = 'local-owner';
 const MODULE = 'chat';
 
 type Workspace = { workspaceId: string; path: string };
-type Session = { sessionId: string; workspaceId: string; title: string; seq: number; createdAt: string; aiUnavailable: number; latestRunId: string | null; latestRunState: Run['state'] | null; storageAvailable: boolean };
-export type Run = { runId: string; sessionId: string; state: 'running' | 'cancelling' | 'completed' | 'cancelled' | 'failed'; delivery: 'not_attempted' | 'attempting'; revision: number; text: string; errorCode: string | null; stopReason: string | null; createdAt: string; storageAvailable: boolean };
+type Session = { sessionId: string; workspaceId: string; title: string; seq: number; createdAt: string; aiUnavailable: number; latestRunId: string | null; latestRunState: Run['state'] | null; storageAvailable: boolean; model: string | null; reasoningEffort: string | null };
+export type Run = { runId: string; sessionId: string; state: 'running' | 'cancelling' | 'completed' | 'cancelled' | 'failed'; delivery: 'not_attempted' | 'attempting'; revision: number; text: string; errorCode: string | null; stopReason: string | null; createdAt: string; storageAvailable: boolean; model: string | null; reasoningEffort: string | null; modelConfirmed: number };
 
-const RUN_SELECT = `SELECT r.id AS runId, r.session_id AS sessionId, r.state, r.delivery, r.revision, m.text, r.error_code AS errorCode, r.stop_reason AS stopReason, r.created_at AS createdAt FROM runs r JOIN messages m ON m.run_id = r.id AND m.role = 'assistant'`;
+const RUN_SELECT = `SELECT r.id AS runId, r.session_id AS sessionId, r.state, r.delivery, r.revision, m.text, r.error_code AS errorCode, r.stop_reason AS stopReason, r.created_at AS createdAt, r.ai_model AS model, r.ai_effort AS reasoningEffort, r.model_confirmed AS modelConfirmed FROM runs r JOIN messages m ON m.run_id = r.id AND m.role = 'assistant'`;
 const SESSION_SELECT = `SELECT s.id AS sessionId, s.workspace_id AS workspaceId, s.title, s.seq, s.created_at AS createdAt,
-  s.agent_unavailable AS aiUnavailable, r.id AS latestRunId, r.state AS latestRunState
+  s.agent_unavailable AS aiUnavailable, r.id AS latestRunId, r.state AS latestRunState, s.ai_model AS model, s.ai_effort AS reasoningEffort
   FROM sessions s LEFT JOIN runs r ON r.id = (SELECT run_id FROM messages WHERE session_id = s.id AND role = 'assistant' ORDER BY seq DESC LIMIT 1)`;
 export const isFinal = (run: Run) => ['completed', 'cancelled', 'failed'].includes(run.state);
 
@@ -69,7 +71,7 @@ export class RecordStore {
     const version = Number(this.db.prepare('PRAGMA user_version').get()!.user_version);
     const appId = Number(this.db.prepare('PRAGMA application_id').get()!.application_id);
     const objects = Number(this.db.prepare("SELECT count(*) AS count FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'").get()!.count);
-    if ((version === 0 && (objects !== 0 || appId !== 0)) || (version !== 0 && (![1, 2].includes(version) || appId !== APPLICATION_ID))) {
+    if ((version === 0 && (objects !== 0 || appId !== 0)) || (version !== 0 && (![1, 2, 3].includes(version) || appId !== APPLICATION_ID))) {
       throw new AppError('UNSUPPORTED_STORE', '지원하지 않는 저장소 형식입니다. 원본을 변경하지 않습니다.');
     }
     if (this.db.prepare('PRAGMA quick_check').get()!.quick_check !== 'ok') throw new Error('Integrity check failed');
@@ -123,6 +125,21 @@ export class RecordStore {
         CREATE UNIQUE INDEX messages_run_role ON messages(run_id, role) WHERE run_id IS NOT NULL;
         PRAGMA user_version = 2;
       `));
+    }
+    if (version < 3) {
+      if (version === 2) this.db.prepare('VACUUM INTO ?').run(join(this.directory, `records-v2-${randomUUID()}.sqlite`));
+      this.transaction(() => {
+        this.db.exec(`
+          CREATE TABLE ai_settings (id INTEGER PRIMARY KEY CHECK(id = 1), model TEXT NOT NULL, effort TEXT NOT NULL, probe_job TEXT, probe_session_id TEXT, probe_workspace TEXT) STRICT;
+          ALTER TABLE sessions ADD COLUMN ai_model TEXT;
+          ALTER TABLE sessions ADD COLUMN ai_effort TEXT;
+          ALTER TABLE runs ADD COLUMN ai_model TEXT;
+          ALTER TABLE runs ADD COLUMN ai_effort TEXT;
+          ALTER TABLE runs ADD COLUMN model_confirmed INTEGER NOT NULL DEFAULT 0 CHECK(model_confirmed IN (0,1));
+          PRAGMA user_version = 3;
+        `);
+        this.db.prepare('INSERT INTO ai_settings (id, model, effort) VALUES (1, ?, ?)').run(INITIAL_AI_SELECTION.model, INITIAL_AI_SELECTION.reasoningEffort);
+      });
     }
     if (this.db.prepare('PRAGMA foreign_key_check').all().length !== 0) throw new Error('Broken references');
   }
@@ -180,10 +197,33 @@ export class RecordStore {
     });
   }
 
-  handle(request: Request): unknown {
+  handle(request: Request, validateSelection?: (selection: AiSelection) => void): unknown {
     if (this.closed) throw new AppError('STORE_UNAVAILABLE', '저장소가 닫혔습니다.');
     try {
       switch (request.method) {
+        case 'ai.get': throw new AppError('AI_UNAVAILABLE', 'AI 연결을 활성화한 뒤 상태를 확인하세요.');
+        case 'settings.get': return this.settings();
+        case 'settings.update': return this.mutate(request, () => {
+          if (!validateSelection) throw new AppError('AI_UNAVAILABLE', 'AI 모델 목록을 먼저 확인하세요.');
+          validateSelection(request.params.selection);
+          const { model, reasoningEffort } = request.params.selection;
+          this.db.prepare('UPDATE ai_settings SET model = ?, effort = ? WHERE id = 1').run(model, reasoningEffort);
+          return { accepted: true, requestId: request.requestId, settings: this.settings() };
+        });
+        case 'sessions.configure': {
+          this.session(request.params.sessionId);
+          return this.mutate(request, () => {
+            const sessionId = request.params.sessionId;
+            if (this.binding(sessionId).unavailable) throw new AppError('SESSION_UNAVAILABLE', '기록 보기 대화의 설정은 변경할 수 없습니다.');
+            if (this.db.prepare("SELECT id FROM runs WHERE session_id = ? AND state IN ('running','cancelling')").get(sessionId))
+              throw new AppError('SESSION_BUSY', '응답이 끝난 뒤 설정을 변경하세요.');
+            if (!validateSelection) throw new AppError('AI_UNAVAILABLE', 'AI 모델 목록을 먼저 확인하세요.');
+            validateSelection(request.params.selection);
+            this.db.prepare('UPDATE sessions SET ai_model = ?, ai_effort = ? WHERE id = ?')
+              .run(request.params.selection.model, request.params.selection.reasoningEffort, sessionId);
+            return { accepted: true, requestId: request.requestId, session: this.session(sessionId) };
+          });
+        }
         case 'runs.get':
         case 'runs.watch':
         case 'runs.unwatch': return this.run(request.params.runId);
@@ -191,12 +231,13 @@ export class RecordStore {
           this.session(request.params.sessionId);
           return this.mutate(request, () => {
             const sessionId = request.params.sessionId;
+            const selection = this.selection(sessionId);
             if (this.binding(sessionId).unavailable) throw new AppError('SESSION_UNAVAILABLE', '이 대화의 AI 연결을 이어갈 수 없습니다. 기록을 확인하고 새 대화를 시작하세요.');
             if (this.db.prepare("SELECT id FROM runs WHERE session_id = ? AND state IN ('running','cancelling')").get(sessionId))
               throw new AppError('SESSION_BUSY', '이 대화에 끝나지 않은 실행이 있습니다.');
             const runId = randomUUID();
             const now = new Date().toISOString();
-            this.db.prepare('INSERT INTO runs (id, session_id, state, created_at) VALUES (?, ?, ?, ?)').run(runId, sessionId, 'running', now);
+            this.db.prepare('INSERT INTO runs (id, session_id, state, created_at, ai_model, ai_effort) VALUES (?, ?, ?, ?, ?, ?)').run(runId, sessionId, 'running', now, selection.model, selection.reasoningEffort);
             const insert = this.db.prepare('INSERT INTO messages (id, session_id, text, created_at, role, run_id) VALUES (?, ?, ?, ?, ?, ?)');
             insert.run(randomUUID(), sessionId, request.params.text, now, 'user', runId);
             insert.run(randomUUID(), sessionId, '', now, 'assistant', runId);
@@ -215,9 +256,10 @@ export class RecordStore {
           this.checkWorkspace(request.params.workspaceId);
           return this.mutate(request, () => {
             const sessionId = randomUUID();
-            this.db.prepare(`INSERT INTO sessions (id, workspace_id, principal, module, title, created_at)
-              VALUES (?, ?, ?, ?, ?, ?)`)
-              .run(sessionId, this.workspace.workspaceId, PRINCIPAL, MODULE, request.params.title, new Date().toISOString());
+            const selection = this.settings().selection;
+            this.db.prepare(`INSERT INTO sessions (id, workspace_id, principal, module, title, created_at, ai_model, ai_effort)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+              .run(sessionId, this.workspace.workspaceId, PRINCIPAL, MODULE, request.params.title, new Date().toISOString(), selection.model, selection.reasoningEffort);
             return { accepted: true, requestId: request.requestId, session: this.session(sessionId) };
           });
         }
@@ -297,10 +339,28 @@ export class RecordStore {
     this.transaction(() => this.db.prepare('UPDATE sessions SET agent_unavailable = 1 WHERE id = ?').run(sessionId));
   }
 
+  settings() {
+    const selection = this.db.prepare('SELECT model, effort AS reasoningEffort FROM ai_settings WHERE id = 1').get() as AiSelection;
+    return { selection, storageAvailable: !this.failed && !this.closed };
+  }
+
+  selection(sessionId: string): AiSelection {
+    const session = this.session(sessionId);
+    if (!session.model || !session.reasoningEffort) throw new AppError('AI_SETTINGS_REQUIRED', '이전 대화에서 사용할 모델과 추론 강도를 선택하세요.');
+    return { model: session.model, reasoningEffort: session.reasoningEffort };
+  }
+
+  probeJob() { return this.db.prepare('SELECT probe_job AS job FROM ai_settings WHERE id = 1').get()!.job as string | null; }
+  setProbeJob(job: string | null) { this.transaction(() => this.db.prepare('UPDATE ai_settings SET probe_job = ? WHERE id = 1').run(job)); }
+  probeSession() {
+    return this.db.prepare('SELECT probe_session_id AS sessionId FROM ai_settings WHERE id = 1 AND probe_workspace = ?').get(this.workspace.path)?.sessionId as string | null | undefined;
+  }
+  setProbeSession(sessionId: string | null) { this.transaction(() => this.db.prepare('UPDATE ai_settings SET probe_session_id = ?, probe_workspace = ? WHERE id = 1').run(sessionId, this.workspace.path)); }
+
   claimRun(runId: string): string | null {
     this.run(runId);
     return this.transaction(() => {
-      const changed = this.db.prepare("UPDATE runs SET delivery = 'attempting', revision = revision + 1 WHERE id = ? AND delivery = 'not_attempted' AND state = 'running'").run(runId).changes;
+      const changed = this.db.prepare("UPDATE runs SET delivery = 'attempting', model_confirmed = 1, revision = revision + 1 WHERE id = ? AND delivery = 'not_attempted' AND state = 'running'").run(runId).changes;
       return changed ? String(this.db.prepare("SELECT text FROM messages WHERE run_id = ? AND role = 'user'").get(runId)!.text) : null;
     });
   }

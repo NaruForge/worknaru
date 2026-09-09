@@ -1,11 +1,14 @@
 import { z } from 'zod';
 import { ClientError, WebClient } from './web-client.js';
 import type { Message, Ready, Run, Session, Workspace } from './web-client.js';
+import { aiSelectionSchema } from './ai-settings.js';
+import type { AiInfo, AiSelection, AiSettings } from './ai-settings.js';
 
 const pendingSchema = z.object({
-  method: z.enum(['sessions.create', 'runs.start', 'runs.cancel']),
+  method: z.enum(['sessions.create', 'runs.start', 'runs.cancel', 'settings.update', 'sessions.configure']),
   requestId: z.uuid(), storeEpoch: z.uuid(), workspaceId: z.uuid(),
   sessionId: z.uuid().optional(), text: z.string().optional(),
+  selection: aiSelectionSchema.optional(),
 });
 type Pending = z.infer<typeof pendingSchema>;
 type Page = { messages: Message[]; upTo: number; nextAfter: number | null };
@@ -14,6 +17,7 @@ export type ChatState = {
   sessions: Session[]; nextSession: number | null; selected?: string;
   pages: Record<string, Page>; runs: Record<string, Run>; drafts: Record<string, string>;
   loading: boolean; busy: boolean; pending?: Pending; error?: string;
+  settings?: AiSettings; settingsLoading?: boolean; settingsError?: string; aiInfo?: AiInfo; aiLoading?: boolean; aiError?: string;
 };
 const final = (run: Run) => ['completed', 'failed', 'cancelled'].includes(run.state);
 const errorText = (error: unknown) => error instanceof Error ? error.message : '요청을 확인할 수 없습니다.';
@@ -47,7 +51,7 @@ export class ChatStateStore {
     ++this.selection;
     clearTimeout(this.poll);
     this.watched = undefined;
-    this.update({ connection: 'connecting', busy: false, loading: false, error: undefined });
+    this.update({ connection: 'connecting', busy: false, loading: false, error: undefined, aiInfo: undefined, settings: undefined, settingsLoading: false, settingsError: undefined, aiLoading: false, aiError: undefined });
     try {
       const ready = await this.client.connect(endpoint, token);
       const workspace = await this.client.call('workspaces.get', {});
@@ -64,6 +68,9 @@ export class ChatStateStore {
       if (!this.state.selected && this.state.sessions[0]) this.update({ selected: this.state.sessions[0].sessionId });
       if (this.state.selected) await this.select(this.state.selected);
       if (pending) await this.resolvePending();
+      if (ready.capabilities.includes('settings.get')) await this.readSettings();
+      if (generation !== this.generation) return;
+      if (ready.capabilities.includes('ai.get')) void this.refreshAi();
       this.schedule();
     } catch (error) {
       if (generation !== this.generation) return;
@@ -174,6 +181,37 @@ export class ChatStateStore {
     this.update({ pending });
   }
   private canMutate() { return this.state.connection === 'online' && !this.state.busy && !this.state.pending && this.state.ready && this.state.workspace; }
+  private async readSettings() {
+    const generation = this.generation;
+    const settings = await this.client.call('settings.get', {});
+    if (generation === this.generation) this.update({ settings, settingsError: undefined });
+  }
+  async refreshSettings() {
+    if (!this.canMutate() || !this.state.ready?.capabilities.includes('settings.get') || this.state.settingsLoading) return;
+    const generation = this.generation;
+    this.update({ settingsLoading: true, settingsError: undefined });
+    try { await this.readSettings(); }
+    catch (error) { if (generation === this.generation) this.update({ settings: undefined, settingsError: errorText(error) }); }
+    finally { if (generation === this.generation) this.update({ settingsLoading: false }); }
+  }
+  async refreshAi() {
+    if (this.state.connection !== 'online' || !this.state.ready?.capabilities.includes('ai.get') || this.state.aiLoading) return;
+    const generation = this.generation;
+    this.update({ aiLoading: true, aiError: undefined });
+    try {
+      const info = await this.client.call('ai.get', {});
+      if (generation === this.generation) this.update({ aiInfo: info });
+    } catch (error) { if (generation === this.generation) this.update({ aiInfo: undefined, aiError: errorText(error) }); }
+    finally { if (generation === this.generation) this.update({ aiLoading: false }); }
+  }
+  async configure(selection: AiSelection, sessionId?: string) {
+    if (!this.canMutate() || !this.state.aiInfo || (!sessionId && (this.state.settingsLoading || !this.state.settings?.storageAvailable))) return;
+    const pending: Pending = { method: sessionId ? 'sessions.configure' : 'settings.update', selection, sessionId,
+      requestId: crypto.randomUUID(), storeEpoch: this.state.ready!.storeEpoch, workspaceId: this.state.workspace!.workspaceId };
+    await this.mutate(pending, () => sessionId
+      ? this.client.call('sessions.configure', { sessionId, selection }, pendingIdentity(pending))
+      : this.client.call('settings.update', { selection }, pendingIdentity(pending)));
+  }
   async createSession() {
     if (!this.canMutate()) return;
     const pending: Pending = { method: 'sessions.create', requestId: crypto.randomUUID(), storeEpoch: this.state.ready!.storeEpoch, workspaceId: this.state.workspace!.workspaceId };
@@ -181,7 +219,7 @@ export class ChatStateStore {
   }
   async send() {
     const session = this.state.sessions.find((item) => item.sessionId === this.state.selected);
-    if (!this.canMutate() || !session || session.aiUnavailable || !session.storageAvailable || !this.state.ready!.aiExecution) return;
+    if (!this.canMutate() || !session || !session.model || !session.reasoningEffort || session.aiUnavailable || !session.storageAvailable || !this.state.ready!.aiExecution) return;
     const run = session.latestRunId ? this.state.runs[session.latestRunId] : undefined;
     if (session.latestRunId && (!run || !final(run) || !run.storageAvailable || run.errorCode === 'PROCESS_CLEANUP_UNKNOWN')) return;
     const text = this.state.drafts[session.sessionId] ?? '';
@@ -197,8 +235,11 @@ export class ChatStateStore {
     const pending: Pending = { method: 'runs.cancel', sessionId: run.sessionId, requestId: crypto.randomUUID(), storeEpoch: this.state.ready!.storeEpoch, workspaceId: this.state.workspace!.workspaceId };
     await this.mutate(pending, () => this.client.call('runs.cancel', { runId: run.runId }, pendingIdentity(pending)));
   }
-  private async applyReceipt(result: { session: Session } | { run: Run }, pending: Pending) {
-    if ('session' in result) {
+  private async applyReceipt(result: { session: Session } | { run: Run } | { settings: AiSettings }, pending: Pending) {
+    if ('settings' in result) {
+      await this.readSettings();
+    } else if ('session' in result) {
+      if (pending.method === 'sessions.configure') { await this.refreshSession(result.session.sessionId); return; }
       this.update({ sessions: [result.session, ...this.state.sessions.filter((session) => session.sessionId !== result.session.sessionId)] });
       await this.select(result.session.sessionId);
     } else {
@@ -209,7 +250,7 @@ export class ChatStateStore {
       await this.refreshTail();
     }
   }
-  private async mutate(pending: Pending, call: () => Promise<{ session: Session } | { run: Run }>) {
+  private async mutate(pending: Pending, call: () => Promise<{ session: Session } | { run: Run } | { settings: AiSettings }>) {
     const generation = this.generation;
     this.update({ busy: true, error: undefined });
     let sent = false;
