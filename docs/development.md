@@ -610,3 +610,38 @@ Settings를 열거나 ‘상태 새로고침’을 누르면 저장된 기본값
 v3는 기본값·조회용 provider 식별자와 대화별 선택, Run별 선택·적용 확인을 추가한다. v2 데이터는 `records-v2-<uuid>.sqlite`에 일관된 백업을 만든 뒤 트랜잭션으로 전환한다. v1 데이터는 기존 v1 백업을 만든 뒤 v2·v3 변경을 순서대로 수행한다. 메시지·접수 장부·epoch는 유지한다.
 
 이전 형식에서 생성한 대화와 Run의 모델 필드는 `null`로 남긴다. 과거 실행 모델을 추정하거나 새 기본값을 소급하지 않는다. 기존 대화를 이어 쓰려면 UI에서 모델·추론 강도를 한 번 선택해야 하며, 선택 전 `runs.start`는 `AI_SETTINGS_REQUIRED`로 거절한다. 정상 완료·정리 확인 등 기존 재개 조건도 충족해야 한다.
+
+## Control geometry와 시각 회귀 검사
+
+`npm run test:web`는 기존 동작 시험에 더해 `tests/control-contracts.spec.mjs`의 실제 control geometry·invalid/focus·크기 경계 검사와 이미지 비교를 실행한다. `tests/web.spec.mjs`의 제품 시각 시험은 가짜 ACP를 사용하는 실제 Daemon으로 Chat·설정·연결 Dialog를 비교한다. 실제 AI나 개인 데이터는 사용하지 않는다. 작은 갤러리만 검사할 때는 다음 명령을 사용한다.
+
+```powershell
+$env:WORKNARU_TEST_WEB_PORT = '15179' # 해당 포트가 비어 있을 때
+npm run test:web -- tests/control-contracts.spec.mjs
+```
+
+이미지 기준은 각 `*.spec.mjs-snapshots/` 안의 PNG다. `tests/visual-environment.json`에 Windows release, Edge 버전과 Segoe UI·Malgun Gothic 폰트 파일의 SHA-256을 기록한다. 실행 환경이 다르면 이미지 검사를 실패시켜 다른 환경의 결과로 조용히 덮어쓰지 않는다. 공통 설정은 headless Edge, 1280×900, device scale 1, ko-KR, Asia/Seoul, 초기 Light, reduced motion이다. 모바일 제품 캡처만 명시적으로 320×850을 사용한다. caret·animation을 제외하고 차이 픽셀 허용량은 0이다. native Select popup은 OS 영역이므로 닫힌 control과 키보드 선택을 검사한다.
+
+정상·오류·비활성·loading, Light/Dark와 오류+focus의 작은 갤러리를 기준으로 둔다. 임의 Main Color의 전체 조합을 이미지로 만들지 않고 기존 배색 계산 시험과 대표 색의 실제 DOM 대비 검사를 사용한다. 동적 포트는 연결 입력에 고정된 예제 값을 입력하여 통제하고 control 자체를 mask하지 않는다. baseline 비교는 동작·ARIA·실제 보조 기술 검사를 대체하지 않는다.
+
+의도적인 변경은 기존 PNG와 새 actual/diff, 크기 실측, 변경 이유를 함께 검토한다. 최초 제출 이미지도 검토 후보이며 사용자 확인 전 승인된 기준이라고 부르지 않는다. 승인된 변경에 한해 해당 시험을 좁혀 갱신한 뒤 **갱신 옵션 없이** 다시 실행한다.
+
+```powershell
+npm run test:web -- tests/control-contracts.spec.mjs --update-snapshots
+npm run test:web -- tests/web.spec.mjs --grep 'product visual baseline' --update-snapshots
+npm run test:web
+```
+
+브라우저·폰트를 변경했다면 먼저 새 환경과 시각 diff를 검토한다. 환경 기록은 `tests/visual-baseline.mjs`의 `visualEnvironment(browser)`로 수집할 수 있으며, 이를 기록하고 위 이미지 갱신을 수행하는 행위도 baseline 변경 검토에 포함한다. 단순한 실패 해소를 위해 버전·폰트 확인이나 허용 오차를 완화하지 않는다.
+
+환경 변경을 검토할 때 현재 값을 출력하는 명령은 다음과 같다. 이 명령은 기록이나 PNG를 덮어쓰지 않는다.
+
+```powershell
+@'
+import { chromium } from '@playwright/test';
+import { visualEnvironment } from './tests/visual-baseline.mjs';
+const browser = await chromium.launch({ channel: 'msedge', headless: true });
+try { console.log(JSON.stringify(visualEnvironment(browser), null, 2)); }
+finally { await browser.close(); }
+'@ | node --input-type=module
+```

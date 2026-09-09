@@ -102,12 +102,12 @@ export function Chat({ state, model, reconnect, approvals, create, scrollPositio
           const text = message.role === 'assistant' && messageRun ? messageRun.text : message.text;
           return <article key={message.messageId} className={`message ${message.role}`} aria-label={message.role === 'user' ? '내 메시지' : 'AI 메시지'}><div className="message-author">{message.role === 'user' ? '나' : <><span className="spark">✦</span>AI</>}</div><div className="message-text">{text || (active(messageRun) ? '응답을 기다리고 있습니다…' : '저장된 응답 내용이 없습니다.')}</div>{message.role === 'assistant' && messageRun && <div className="message-note">{runLabel(messageRun)}</div>}{message.role === 'assistant' && messageRun && <FileToolHistory tools={messageRun.tools} />}</article>;
         })}
-        {page?.nextAfter !== null && page?.nextAfter !== undefined && <Button className="more-records" disabled={state.loading || state.connection !== 'online'} onClick={() => { stick.current = false; scrollPosition.current = { key: positionKey, top: scroll.current!.scrollTop, stick: false }; void model.moreMessages(); }}>다음 기록 불러오기</Button>}
+        {page?.nextAfter !== null && page?.nextAfter !== undefined && <Button density="compact" variant="outline" className="more-records" disabled={state.loading || state.connection !== 'online'} onClick={() => { stick.current = false; scrollPosition.current = { key: positionKey, top: scroll.current!.scrollTop, stick: false }; void model.moreMessages(); }}>다음 기록 불러오기</Button>}
         {unlistedRun && <article className="message assistant"><div className="message-author"><span className="spark">✦</span>최근 응답</div>{page && page.nextAfter !== null && <p className="muted small">중간 대화는 ‘다음 기록 불러오기’로 확인할 수 있습니다.</p>}<div className="message-text">{run.text || (active(run) ? '응답을 기다리고 있습니다…' : '저장된 응답 내용이 없습니다.')}</div><div className="message-note">{runLabel(run)}</div></article>}
         {unlistedRun && <FileToolHistory tools={run.tools} />}
       </div>
     </div>
-    {newOutput && <Button className="new-output" onClick={() => { stick.current = true; scroll.current!.scrollTop = scroll.current!.scrollHeight; scrollPosition.current = { key: positionKey, top: scroll.current!.scrollTop, stick: true }; setNewOutput(false); }}>최근 내용으로 이동 ↓</Button>}
+    {newOutput && <Button density="compact" variant="outline" className="new-output" onClick={() => { stick.current = true; scroll.current!.scrollTop = scroll.current!.scrollHeight; scrollPosition.current = { key: positionKey, top: scroll.current!.scrollTop, stick: true }; setNewOutput(false); }}>최근 내용으로 이동 ↓</Button>}
     <div className="compose-area">
     {approvals && <div className="approval-stack">{approvals}</div>}
     {warning && <div className={`notice${warning.neutral ? ' notice--neutral' : ''}`} role="status"><strong>{warning.title}</strong><p>{warning.text}</p>
@@ -117,16 +117,16 @@ export function Chat({ state, model, reconnect, approvals, create, scrollPositio
     {state.error && state.connection === 'online' && <div className="error-banner" role="alert">{state.error}<IconButton onClick={() => model.clearError()} label="오류 안내 닫기"><Icon name="close" /></IconButton></div>}
 
       <div className="compose">
-        <TextArea aria-label="메시지" placeholder={session ? '메시지를 입력하세요…' : '새 대화를 만든 뒤 메시지를 입력하세요'} value={draft} disabled={!session} rows={2}
+        <TextArea presentation="plain" aria-label="메시지" placeholder={session ? '메시지를 입력하세요…' : '새 대화를 만든 뒤 메시지를 입력하세요'} value={draft} disabled={!session} rows={2}
           onChange={(event) => model.setDraft(event.target.value)} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
           onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && !composing.current && event.keyCode !== 229) { event.preventDefault(); if (!blocked && !tooLong) void model.send(); } }} />
 
         <div className="compose-controls"><AiControls compact info={state.aiInfo} selection={session} disabled={!!blocked || state.aiLoading === true} change={(selection) => { if (session) void model.configure(selection, session.sessionId); }} /><span className="spacer" />
-          {active(run) ? <IconButton className="compose-send" variant="primary" label="응답 중지" disabled={state.connection !== 'online' || state.busy || !!state.pending || run?.state !== 'running' || run?.storageAvailable === false} onClick={() => void model.cancel()}><Icon name="stop" /></IconButton>
-            : <IconButton className="compose-send" variant="primary" label="메시지 전송" disabled={!!blocked || !session?.model || !session.reasoningEffort || tooLong || !draft.trim()} onClick={() => void model.send()}><Icon name="arrow" /></IconButton>}
+          {active(run) ? <IconButton shape="round" className="compose-send" variant="primary" label="응답 중지" disabled={state.connection !== 'online' || state.busy || !!state.pending || run?.state !== 'running' || run?.storageAvailable === false} onClick={() => void model.cancel()}><Icon name="stop" /></IconButton>
+            : <IconButton shape="round" className="compose-send" variant="primary" label="메시지 전송" disabled={!!blocked || !session?.model || !session.reasoningEffort || tooLong || !draft.trim()} onClick={() => void model.send()}><Icon name="arrow" /></IconButton>}
         </div>
         {session && <p className="model-status">{!session.model ? '모델과 추론 강도를 선택해 주세요.' : run?.modelConfirmed === 1 && run.model === session.model && run.reasoningEffort === session.reasoningEffort ? `최근 적용: ${run.model} · ${run.reasoningEffort}` : '선택값은 다음 메시지에 적용됩니다.'}</p>}
-        {state.aiError && <Button className="settings-action small" disabled={state.aiLoading || state.connection !== 'online'} onClick={() => void model.refreshAi()}>모델 목록 다시 확인</Button>}
+        {state.aiError && <Button density="compact" className="settings-action small" disabled={state.aiLoading || state.connection !== 'online'} onClick={() => void model.refreshAi()}>모델 목록 다시 확인</Button>}
       </div>
       {tooLong ? <p className="error-text small" role="alert">입력이 UTF-8 16KiB를 넘었습니다. 내용을 줄여 주세요.</p> : <p className="compose-help">Enter 전송 · Shift + Enter 줄바꿈{active(run) ? ' · 응답 중에는 다음 질문의 초안을 작성할 수 있습니다.' : ''}</p>}
     </div>

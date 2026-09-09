@@ -5,6 +5,7 @@ import { createServer } from 'node:net';
 import { once } from 'node:events';
 import { startDevServers } from '../scripts/dev.mjs';
 import { fixture, launch, projectRoot, connect, createSession, mutation } from './helpers.mjs';
+import { visualSnapshot } from './visual-baseline.mjs';
 const origin = `http://127.0.0.1:${process.env.WORKNARU_TEST_WEB_PORT ?? 5173}`;
 
 const test = base.extend({
@@ -17,6 +18,30 @@ const test = base.extend({
     const daemon = await launch(records, { entry: join(projectRoot, 'tests/acp-daemon.mjs'), extraArgs: ['--origin', origin] });
     await use(daemon);
   },
+});
+
+test('product visual baseline covers Chat, Settings and the connection dialog',async({page,daemon,records,browser})=>{
+  await login(page,daemon,records);await newSession(page);
+  await send(page,'검토할 내용을 세 가지로 정리해 주세요.');
+  await expect(page.locator('.run-state')).toHaveText('응답 완료');
+  await page.getByRole('textbox',{name:'메시지',exact:true}).fill('다음 질문의 초안');
+  await page.evaluate(()=>document.fonts.ready);
+  await visualSnapshot(page,'chat-light-desktop.png',browser);
+  await page.getByRole('button',{name:'어두운 테마',exact:true}).click();
+  await page.setViewportSize({width:320,height:850});
+  await expect(page.getByRole('button',{name:'← 대화 목록'})).toBeVisible();
+  await visualSnapshot(page,'chat-dark-mobile.png',browser);
+  await page.setViewportSize({width:1280,height:900});
+  await page.getByRole('button',{name:'Settings',exact:true}).click();
+  await page.getByRole('navigation',{name:'설정 메뉴'}).getByRole('button',{name:'AI',exact:true}).click();
+  await expect(page.getByRole('button',{name:'상태 새로고침',exact:true})).toBeEnabled();
+  await expect(page.getByRole('combobox',{name:'기본 Model',exact:true})).toBeEnabled();
+  await visualSnapshot(page,'settings-dark-desktop.png',browser);
+  await page.getByRole('button',{name:'연결됨',exact:true}).click();
+  // The fixture's ephemeral port is test data, not part of the control contract.
+  // Enter a stable example value instead of masking the input and its border.
+  await page.getByRole('textbox',{name:'Daemon 주소'}).fill('ws://127.0.0.1:4310/ws');
+  await visualSnapshot(page.getByRole('dialog',{name:'Workspace 연결'}),'connection-dark-dialog.png',browser);
 });
 
 async function developmentServer(records, acp = false, hub, requireKey = true) {

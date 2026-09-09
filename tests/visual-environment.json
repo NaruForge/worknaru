@@ -1,0 +1,12 @@
+{
+  "platform": "win32",
+  "osRelease": "10.0.26200",
+  "browserVersion": "152.0.4191.66",
+  "fonts": {
+    "segoeui.ttf": "8134dbcd09e7b123c9a7f229d49cffbcb01352cc72ea5e1076b65d0dca9f73cd",
+    "segoeuib.ttf": "aeb9e4a6ec5cc59f4d72df8189032d7dbb28f45161cf1552174818b5465dac4e",
+    "seguisb.ttf": "2d9b22d71f72de2823fee5d9c8bc1b0fc32b2577c4c27b9ec6abdbb8df0e1731",
+    "malgun.ttf": "7a183cf1c6c56b9609fcc16eda8b5229fbc11758a21e669ec00343239b02192f",
+    "malgunbd.ttf": "e8cbc0b2afcc14fb45dfb6086d5102c0b23a96e7b6e708f3122acde1b86c9082"
+  }
+}

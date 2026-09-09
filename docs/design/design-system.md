@@ -47,3 +47,15 @@ OKLCH 변환은 [CSS Color 4의 색공간 정의](https://www.w3.org/TR/css-colo
 현재 제품의 baseline은 main `268cc629a6abd61aa3dd6dfa83976d7db8dacd2a`에서 가짜 ACP를 사용해 캡처한다. 컨셉 선택은 미관과 사용성의 판단이며 자동 대비 시험으로 대신하지 않는다. 키보드·스크린리더·제품 기능 전체의 검증과 최종 사용자 확인은 실제 적용 단계에서 수행한다.
 
 실행과 검증 명령은 [로컬 개발 안내](../development.md#디자인-컨셉-프로토타입)를 따른다.
+
+## 공통 control의 크기와 상태
+
+기본 한 줄 Button·Input·Select는 같은 글자 크기·테두리 공간·최소 높이를 사용한다. 강조 variant는 geometry를 바꾸지 않는다. native Select는 Edge의 고유 줄높이를 감안해 공통 Select 안에서 block padding을 보정한다. 높이를 고정해 긴 label이나 확대된 글자를 자르지 않는다. 관련 보강: [#32](https://github.com/NaruForge/worknaru/issues/32).
+
+작은 보조 버튼은 `density="compact"`, Chat의 native 선택기는 `compact`, 원형 전송·중지는 `shape="round"`, composer의 테두리 없는 TextArea는 `presentation="plain"`으로 의미 있는 차이를 선택한다. 모델 선택기의 아이콘과 화살표, 숨긴 label 처리는 공통 Select·Field가 담당한다. 소비 화면은 배치와 가용 너비를 정한다. 여러 줄 navigation row와 문장 속 복구 링크는 form control과 다른 역할이므로 기존 행 배치·작은 텍스트 조치 규격을 유지한다. 모바일 복귀 버튼의 최소 hit area도 유지한다.
+
+Field의 오류는 설명·ARIA 연결과 테두리를 함께 유지하고 focus ring과 공존한다. 테두리 없는 inline control은 내부 밑줄로 오류를 표현한다. `focus-ring`은 강조색과 별개의 의미이며 Button·Input·TextArea·Select가 직접 소비한다. 개인 배색 생성이나 업무 상태·권한 계약은 이 규칙의 책임이 아니다.
+
+모바일 탐색 전환의 focus는 화면 배치 직후 설정한다. 다음 animation frame으로 미뤄 사용자가 시작한 입력에서 focus를 빼앗지 않는다.
+
+공통 control fixture는 기존 시안의 ‘공통 컨트롤’ 화면을 사용한다. 크기·상태 검사는 실제 component와 전체 제품 CSS를 사용하며, 대표 제품 화면은 실제 Daemon을 사용하는 E2E에서 별도로 비교한다. 새 이미지 기준은 PR에서 사람이 검토할 후보이며 생성이나 자동 시험 통과를 사용자 승인으로 간주하지 않는다. 승인 뒤에는 의도적인 변경의 전후 비교와 이유를 확인하여 갱신한다.
