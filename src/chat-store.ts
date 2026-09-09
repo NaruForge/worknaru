@@ -1,8 +1,9 @@
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { assertUnlinkedFile } from './paths.js';
-import { ChatError, type Selection } from './chat-contract.js';
+import { ChatError, SelectionSchema, type ChatSettings, type Selection } from './chat-contract.js';
 
 export type ChatBinding = { id: string; title: string; createdAt: string; creation: { title: string; selection: Selection };
   agentId: string | null; pendingMessageId: string | null; pendingExecutionId: string | null; cancelRequested: boolean;
@@ -10,6 +11,7 @@ export type ChatBinding = { id: string; title: string; createdAt: string; creati
 
 export class ChatStore {
   private db: DatabaseSync;
+  readonly storeId: string;
   constructor(directory: string) {
     for (const name of ['worknaru.sqlite', 'worknaru.sqlite-wal', 'worknaru.sqlite-shm', 'worknaru.sqlite-journal']) {
       const file = join(directory, name); if (existsSync(file)) assertUnlinkedFile(file);
@@ -20,14 +22,35 @@ export class ChatStore {
         id TEXT PRIMARY KEY, title TEXT NOT NULL, created_at TEXT NOT NULL, creation TEXT NOT NULL,
         agent_id TEXT UNIQUE, pending_message_id TEXT, pending_execution_id TEXT,
         cancel_requested INTEGER NOT NULL DEFAULT 0, configuring TEXT, responding TEXT
+      );
+      CREATE TABLE IF NOT EXISTS chat_settings (
+        singleton INTEGER PRIMARY KEY CHECK(singleton=1), store_id TEXT NOT NULL,
+        revision INTEGER NOT NULL, defaults TEXT NOT NULL
       );`);
+    this.db.prepare('INSERT OR IGNORE INTO chat_settings(singleton,store_id,revision,defaults) VALUES(1,?,0,?)')
+      .run(randomUUID(), JSON.stringify({ model: 'gpt-5.6-luna', effort: 'low' }));
+    this.storeId = this.db.prepare('SELECT store_id FROM chat_settings WHERE singleton=1').get()!.store_id as string;
   }
   close() { this.db.close(); }
+  settings(): ChatSettings {
+    const row = this.db.prepare('SELECT revision,defaults FROM chat_settings WHERE singleton=1').get()!;
+    return { revision: Number(row.revision), defaults: SelectionSchema.parse(JSON.parse(row.defaults as string)) };
+  }
+  updateSettings(expectedRevision: number, defaults: Selection): ChatSettings {
+    const changed = this.db.prepare('UPDATE chat_settings SET defaults=?,revision=revision+1 WHERE singleton=1 AND revision=?')
+      .run(JSON.stringify(defaults), expectedRevision);
+    if (changed.changes !== 1) throw new ChatError('SETTINGS_CONFLICT', '다른 화면에서 기본값을 변경했습니다. 최신 값을 확인한 뒤 다시 선택하세요.');
+    return this.settings();
+  }
   list(): ChatBinding[] { return this.db.prepare('SELECT * FROM chats ORDER BY created_at DESC, id').all().map(row => this.decode(row)); }
   get(id: string): ChatBinding {
+    const binding = this.find(id);
+    if (!binding) throw new ChatError('CHAT_NOT_FOUND', '대화를 찾을 수 없습니다.');
+    return binding;
+  }
+  find(id: string): ChatBinding | null {
     const row = this.db.prepare('SELECT * FROM chats WHERE id=?').get(id);
-    if (!row) throw new ChatError('CHAT_NOT_FOUND', '대화를 찾을 수 없습니다.');
-    return this.decode(row);
+    return row ? this.decode(row) : null;
   }
   byAgent(agentId: string) {
     const row = this.db.prepare('SELECT * FROM chats WHERE agent_id=?').get(agentId);

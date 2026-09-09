@@ -3,7 +3,7 @@
 관련 작업과 사용자 선택: [#25](https://github.com/NaruForge/worknaru/issues/25).
 제품 책임은 [README](../../README.md), 기존 탐색·입력 기준은 [공통 UI 기준](workspace-chat-ui.md)을 따른다.
 
-Paseo 전환의 첫 제품 범위는 [#35](https://github.com/NaruForge/worknaru/issues/35)를 따른다. 새 Chat은 승인된 배색·공통 control·작은 모델 선택기·입력창 위의 접힌 권한 패널을 사용한다. 아래 전체 Settings·파일 diff·서비스 탐색 시안은 기존 선택의 기록이며 `web/design-prototype/`의 예제로 보존한다. 현재 제품에 해당 기능 전체가 구현됐다는 뜻은 아니다.
+Paseo 전환의 첫 제품 범위는 [#35](https://github.com/NaruForge/worknaru/issues/35), Chat·Settings·탐색 복구는 [#42](https://github.com/NaruForge/worknaru/issues/42)를 따른다. 제품은 승인된 배색·공통 control·작은 모델 선택기·입력창 위의 접힌 권한 패널과 화면·연결·AI Settings를 사용한다. 서비스 탐색·목록·Main과 모바일 단계 탐색을 기존 선택에 맞춰 연결한다. 파일 diff와 시안의 가상 연결·업무 동작은 `web/design-prototype/`에 보존하며 현재 계약과 구분한다.
 
 ## 컨셉과 선택 절차
 

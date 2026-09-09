@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react';
-import { ColorPreference, applyAppearance } from '../appearance.js';
-import { DEFAULT_COLOR, validColor } from '../theme-palette.js';
-import type { Mode } from '../theme-palette.js';
-import { Button, Field, Input } from '../ui.js';
+import { ColorPreference, applyAppearance } from './appearance.js';
+import { DEFAULT_COLOR, validColor } from './theme-palette.js';
+import type { Mode } from './theme-palette.js';
+import { Button, Field, Input } from './ui.js';
 
 export function useAppearance(preference: ColorPreference, mode: Mode) {
   const snapshot = useSyncExternalStore(preference.subscribe, preference.getSnapshot);

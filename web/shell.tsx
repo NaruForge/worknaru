@@ -1,15 +1,16 @@
 import type { ReactNode } from 'react';
-import { Button, IconButton } from '../ui.js';
-import { Icon } from '../icons.js';
+import { Button, IconButton } from './ui.js';
+import { Icon } from './icons.js';
 // The platform shell accepts optional navigation; Chat supplies its own list and body.
-export function WorkspaceShell({ name, online, sidebar, children, connection, settings, theme, toggleTheme, listOpen, toggleList, navigationLabel, devStop, sidebarLabel = 'Module 목록', chat, settingsActive = false, sectionLabel = '기본 제공 Module', stacked }: {
+export function WorkspaceShell({ name, online, sidebar, children, connection, settings, theme, toggleTheme, listOpen, toggleList, navigationLabel, devStop, sidebarLabel = 'Module 목록', chat, settingsActive = false, sectionLabel = '기본 제공 Module', stacked, className = '' }: {
   name: string; online: boolean; sidebar?: ReactNode; children: ReactNode; connection: () => void;
   theme: string; toggleTheme: () => void; listOpen?: boolean; toggleList?: () => void; navigationLabel?: string;
   settings: () => void; sidebarLabel?: string; chat?: () => void; settingsActive?: boolean; sectionLabel?: string;
   devStop?: ReactNode;
+  className?: string;
   stacked?: { view: 'modules' | 'list' | 'main'; list?: ReactNode; backLabel: string; back: () => void };
 }) {
-  return <div className={`window${stacked ? ' window--stacked' : ''}`}>
+  return <div className={`window${stacked ? ' window--stacked' : ''} ${className}`}>
     <header className="chrome">
       <div className="brand"><span className="mark">w</span><span>WorkNaru</span></div>
       <span className="divider" /><span className="workspace-name" title={name}><Icon name="folder" />{name}</span>

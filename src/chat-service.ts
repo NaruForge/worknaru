@@ -22,7 +22,7 @@ export class ChatService {
   async start() { await this.watchAll(); }
   subscribe(listener: (event: ProductEvent) => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   private emit(event: ProductEvent) { if (!this.closed) for (const listener of this.listeners) listener(event); }
-  info() { return { protocol: CHAT_PROTOCOL, workspace: this.workspace, connected: this.runtime.connected, storageAvailable: this.storageAvailable }; }
+  info() { return { protocol: CHAT_PROTOCOL, workspace: this.workspace, storeId: this.store.storeId, connected: this.runtime.connected, storageAvailable: this.storageAvailable }; }
   private serial<T>(id: string, operation: () => Promise<T> | T): Promise<T> {
     if (this.closed) return Promise.reject(new ChatError('DAEMON_STOPPING', '서버를 종료하고 있습니다.'));
     const previous = this.locks.get(id) ?? Promise.resolve();
@@ -57,10 +57,29 @@ export class ChatService {
     return this.watched;
   }
   async models(): Promise<ModelChoice[]> { this.requireConnection(); return this.runtime.catalog(); }
-  async create(id: string, title: string, selection: Selection): Promise<Chat> {
+  settings() { return this.persist(() => this.store.settings()); }
+  private async validateSelection(selection: Selection) {
+    const version = this.runtime.connectionVersion;
+    const models = await this.models();
+    if (!this.runtime.connected || version !== this.runtime.connectionVersion) throw unavailable();
+    if (!models.find(model => model.id === selection.model)?.efforts.some(effort => effort.id === selection.effort))
+      throw new ChatError('MODEL_UNSUPPORTED', '지원하는 모델과 추론 강도를 다시 선택하세요. 다른 모델로 자동 변경하지 않습니다.');
+  }
+  async updateSettings(expectedRevision: number, defaults: Selection) {
+    return this.serial('settings', async () => {
+      this.requireStorage();
+      await this.validateSelection(defaults);
+      const settings = this.persist(() => this.store.updateSettings(expectedRevision, defaults));
+      this.emit({ type: 'changed', chatId: null });
+      return settings;
+    });
+  }
+  async create(id: string, title: string, selection?: Selection): Promise<Chat> {
     return this.serial(id, async () => {
-      this.requireConnection();
-      const binding = this.persist(() => this.store.create(id, title, selection));
+      const previous = this.persist(() => this.store.find(id));
+      // Retrying an implicit-default creation uses its original selection, even if defaults changed.
+      const chosen = selection ?? previous?.creation.selection ?? this.settings().defaults;
+      const binding = this.persist(() => this.store.create(id, title, chosen));
       return this.createBinding(binding);
     });
   }
@@ -69,6 +88,9 @@ export class ChatService {
   }
   private async createBinding(binding: ChatBinding): Promise<Chat> {
     if (!binding.agentId) {
+      // Persist the creation identity before an external check can fail, so its draft remains reachable.
+      // Recovery checks support too; it must never bypass validation or choose a fallback.
+      await this.validateSelection(binding.creation.selection);
       // The stored creation parameters and ID are reused even after a response or binding write is lost.
       const agent = await this.runtime.create(binding.id, binding.creation.title, binding.creation.selection);
       this.persist(() => this.store.bind(binding.id, agent.id));

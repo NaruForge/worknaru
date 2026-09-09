@@ -28,7 +28,7 @@ test('real product UI/headless: tools, permission allow/deny, new-history restar
   const personal = [join(homedir(), '.paseo', 'config.json'), join(homedir(), '.paseo', 'server-id'), join(homedir(), '.codex', 'config.toml'), join(homedir(), '.codex', 'auth.json')];
   const before = personal.map(digest);
   let native, service, server, client, browser, page;
-  let calls = 0, chatId;
+  let calls = 0, chatId, savedDefaults;
   const finished = [];
   const record = value => { appendFileSync(join(directory, 'verification.jsonl'), `${JSON.stringify(value)}\n`); console.log(JSON.stringify(value)); };
   async function start() {
@@ -53,8 +53,18 @@ test('real product UI/headless: tools, permission allow/deny, new-history restar
     assert.equal(await page.getByRole('combobox', { name: 'Reasoning Effort', exact: true }).inputValue(), selection.effort);
     if (chatId) {
       const view = await client.call('chats.get', { chatId }); assert.deepEqual(view.chat.selection, selection); assert.equal(view.chat.status, 'ready');
+      await native.confirmSelection(service.store.get(chatId).agentId, selection);
     }
     record({ scenario, call: ++calls, ...selection, result: 'guarded dispatch', directory });
+  }
+  async function guardAction(scenario) {
+    const models = await client.call('models.list', {});
+    assert.ok(models.find(model => model.id === selection.model)?.efforts.some(effort => effort.id === selection.effort));
+    const target = chatId ?? (await client.call('chats.list', {}))[0]?.id;
+    assert.ok(target);
+    assert.deepEqual((await client.call('chats.get', { chatId: target })).chat.selection, selection);
+    await native.confirmSelection(service.store.get(target).agentId, selection);
+    record({ scenario, call: calls, ...selection, result: 'guarded action' });
   }
   async function waitFinish(start, scenario, expected = 'completed') {
     const event = await deadline(new Promise(resolve => {
@@ -79,6 +89,13 @@ test('real product UI/headless: tools, permission allow/deny, new-history restar
   try {
     browser = await chromium.launch({ channel: 'msedge', headless: true });
     await start();
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await page.getByRole('button', { name: 'AI', exact: true }).click();
+    await page.getByRole('combobox', { name: '기본 Reasoning Effort', exact: true }).selectOption('low');
+    await page.getByText('새 대화 기본값을 저장했습니다. 기존 대화의 설정은 유지됩니다.', { exact: true }).waitFor();
+    savedDefaults = await client.call('settings.get', {}); assert.deepEqual(savedDefaults.defaults, selection);
+    await page.screenshot({ path: join(directory, 'product-settings-ai.png'), fullPage: true });
+    await page.getByRole('button', { name: 'Chat으로 돌아가기', exact: true }).click();
     await sendUI('workspace-read-tool', 'Read source.txt using a file or shell tool. Reply exactly with its contents. Do not change files.', async () => {
       // This isolated Windows Codex home can request approval even for a read-only shell command.
       const allow = page.getByRole('button', { name: '이번 요청 허용', exact: true });
@@ -89,6 +106,7 @@ test('real product UI/headless: tools, permission allow/deny, new-history restar
       if (await summary.isVisible()) {
         await summary.click();
         assert.match(await page.locator('.file-approval').innerText(), /source\.txt/i);
+        await guardAction('workspace-read-allow');
         await allow.click();
       }
     });
@@ -103,6 +121,7 @@ test('real product UI/headless: tools, permission allow/deny, new-history restar
     await sendUI('permission-allow', `Use exec_command to run the PowerShell command below. Set sandbox_permissions to require_escalated and provide a short justification. Wait for the permission response. Do not run other commands, use other tools, or change other files. If denied, do not retry.\n\nCOMMAND (one line):\n${command}\n`, async () => {
       await page.locator('.file-approval summary').waitFor({ timeout: 40_000 }); await page.locator('.file-approval summary').click();
       await page.screenshot({ path: join(directory, 'permission-allow.png'), fullPage: true });
+      await guardAction('permission-allow-action');
       await page.getByRole('button', { name: '이번 요청 허용', exact: true }).click();
     });
     assert.equal(readFileSync(allowed, 'utf8').trim(), 'ALLOWED');
@@ -110,6 +129,7 @@ test('real product UI/headless: tools, permission allow/deny, new-history restar
     process.kill(oldPid, 0); // Closing the tab leaves the active product runtime alive.
     await stop(); assert.throws(() => process.kill(oldPid, 0), { code: 'ESRCH' });
     await start();
+    assert.deepEqual(await client.call('settings.get', {}), savedDefaults);
     const restored = await client.call('chats.get', { chatId });
     assert.ok(restored.timeline.items.some(item => item.kind === 'assistant' && item.text.includes(marker)));
     assert.equal(restored.chat.status, 'ready');
@@ -117,10 +137,12 @@ test('real product UI/headless: tools, permission allow/deny, new-history restar
     const deniedCommand = `Set-Content -LiteralPath '${denied.replaceAll("'", "''")}' -Value 'CHANGED'`;
     await sendUI('permission-deny', `Use exec_command to run the PowerShell command below. Set sandbox_permissions to require_escalated and provide a short justification. Wait for permission. If denied, stop without retrying or using any other tool.\n\nCOMMAND (one line):\n${deniedCommand}\n`, async () => {
       await page.locator('.file-approval summary').waitFor({ timeout: 40_000 }); await page.locator('.file-approval summary').click();
+      await guardAction('permission-deny-action');
       await page.getByRole('button', { name: '거절', exact: true }).click();
     });
     assert.equal(readFileSync(denied, 'utf8'), 'UNCHANGED');
     await sendUI('ui-cancel', 'Use the shell to wait for 30 seconds and then reply DONE. Do not change any files.', async () => {
+      await guardAction('ui-cancel-action');
       await page.getByRole('button', { name: '실행 취소', exact: true }).click();
     });
     await page.screenshot({ path: join(directory, 'product-chat.png'), fullPage: true });

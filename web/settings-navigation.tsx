@@ -1,4 +1,4 @@
-import { Button } from '../ui.js';
+import { Button } from './ui.js';
 export type SettingsSection = 'appearance' | 'connection' | 'ai';
 
 export const settingsSections: Record<SettingsSection, string> = { appearance: '화면', connection: '연결', ai: 'AI' };

@@ -3,6 +3,7 @@ import { z } from 'zod';
 export const CHAT_PROTOCOL = 2;
 export const SelectionSchema = z.object({ model: z.string().min(1).max(160), effort: z.string().min(1).max(40) }).strict();
 export type Selection = z.infer<typeof SelectionSchema>;
+export type ChatSettings = { revision: number; defaults: Selection };
 export type ModelChoice = { id: string; label: string; efforts: { id: string; label: string }[] };
 export type Permission = { id: string; title: string; description: string; detail: string; supported: boolean; responding: boolean };
 export type TimelineItem = { id: string; kind: 'user' | 'assistant' | 'reasoning' | 'tool' | 'notice' | 'error'; text: string;
@@ -14,7 +15,7 @@ export type Chat = { id: string; title: string; createdAt: string; selection: Se
 export type ChatView = { chat: Chat; timeline: TimelinePage };
 export type ProductEvent = { type: 'changed'; chatId: string | null } |
   { type: 'message.finished'; chatId: string; messageId: string; outcome: 'completed' | 'failed' | 'cancelled'; error: string | null };
-export type ServiceInfo = { protocol: typeof CHAT_PROTOCOL; workspace: string; connected: boolean; storageAvailable: boolean };
+export type ServiceInfo = { protocol: typeof CHAT_PROTOCOL; workspace: string; storeId: string; connected: boolean; storageAvailable: boolean };
 
 const id = z.string().uuid();
 const chatId = z.object({ chatId: id }).strict();
@@ -22,7 +23,9 @@ export const ChatParams = {
   'runtime.get': z.object({}).strict(),
   'models.list': z.object({}).strict(),
   'chats.list': z.object({}).strict(),
-  'chats.create': z.object({ id, title: z.string().trim().min(1).max(100), selection: SelectionSchema }).strict(),
+  'settings.get': z.object({}).strict(),
+  'settings.update': z.object({ expectedRevision: z.number().int().nonnegative(), defaults: SelectionSchema }).strict(),
+  'chats.create': z.object({ id, title: z.string().trim().min(1).max(100), selection: SelectionSchema.optional() }).strict(),
   'chats.recover': chatId,
   'chats.get': chatId,
   'chats.watch': chatId,
@@ -35,6 +38,7 @@ export const ChatParams = {
 export type ChatMethod = keyof typeof ChatParams;
 export type ChatResult = {
   'runtime.get': ServiceInfo; 'models.list': ModelChoice[]; 'chats.list': Chat[];
+  'settings.get': ChatSettings; 'settings.update': ChatSettings;
   'chats.create': Chat; 'chats.recover': Chat; 'chats.get': ChatView; 'chats.watch': ChatView;
   'chats.timeline': TimelinePage; 'chats.configure': Chat;
   'messages.send': { messageId: string; accepted: true }; 'messages.cancel': { requested: true };

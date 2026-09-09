@@ -1,6 +1,6 @@
 # 로컬 개발과 Daemon 계약
 
-현재 제품은 [ADR-0016](adr/0016-use-paseo-for-agent-management.md)과 [전환 #35](https://github.com/NaruForge/worknaru/issues/35)에 따라 Paseo 기반의 새 데이터에서 실행한다. 대화 목록·첫/후속 입력·응답과 도구 기록·모델/추론 선택·권한 1회 허용/거절·취소를 UI와 headless에서 제공한다. 기존 ACP 대화·파일 승인·Run API·운영 CLI·Hub·전체 Settings는 이식하지 않는다.
+현재 제품은 [ADR-0016](adr/0016-use-paseo-for-agent-management.md)과 [전환 #35](https://github.com/NaruForge/worknaru/issues/35)에 따라 Paseo 기반의 새 데이터에서 실행한다. 대화 목록·첫/후속 입력·응답과 도구 기록·모델/추론 선택·권한 1회 허용/거절·취소를 UI와 headless에서 제공한다. [#42](https://github.com/NaruForge/worknaru/issues/42)에서 화면·연결·AI Settings와 공통 탐색을 현재 계약에 연결했다. 기존 ACP 대화·파일 승인·Run API·운영 CLI·Hub는 이식하지 않는다.
 
 ## 준비와 실행
 
@@ -86,8 +86,21 @@ UI 포트를 바꾸면 Vite의 `--port`와 Daemon의 `--origin`을 함께 맞춘
 | 포트가 사용 중이거나 바인딩할 수 없음 | 통합 실행의 `--web-port`·`--daemon-port`를 다른 포트로 지정한다. 기존 프로세스는 자동 종료하지 않는다. |
 | 개발 UI가 403을 반환함 | 통합 실행이 출력한 `http://127.0.0.1:포트/` 주소를 사용한다. |
 | UI가 연결 확인 중에 머무름 | Daemon 실행 여부, 허용한 UI Origin과 실제 주소, UI의 Daemon 주소를 확인한다. 빌드된 UI의 주소 변경은 재빌드한다. |
+| 모델 목록 조회 실패로 전송이 막힘 | 오류의 ‘상태 확인’ 또는 대화 목록 ‘새로고침’으로 모델 목록과 상태를 다시 조회한다. 정상화되면 초안을 유지한 채 전송할 수 있다. |
 | Codex 실행 파일을 찾지 못함 | `--codex-path` 또는 `WORKNARU_CODEX_PATH`로 실제 `codex.exe` 경로를 지정한다. |
 | 데이터 형식·Workspace·동시 소유 오류 | 같은 데이터는 같은 Workspace의 한 실행만 사용한다. 다른 Workspace나 첫 전환에는 프로젝트 내부의 별도 빈 `--data-dir`을 지정하고 기존 자료를 보존한다. |
+
+### Settings와 화면 탐색
+
+설정은 Chat과 분리된 화면·연결·AI 메뉴를 갖는다. 화면 배색은 같은 origin의 브라우저 개인 설정으로, 미리보기·적용·취소와 다른 탭의 저장 반영을 제공한다. 적용하지 않고 화면 설정을 떠나면 마지막 적용색으로 돌아간다. Light/Dark는 OS의 초기 선호를 읽고 수동으로 전환한다.
+
+연결 메뉴는 WorkNaru·AI 실행 환경·Workspace·저장·모델 조회 상태를 표시한다. 고정한 Paseo 버전의 Provider `ready`나 모델 목록은 로그인 성공의 증거로 사용하지 않는다. 현재 제품 연결은 별도 인증 판정을 제공하지 않으므로 인증은 ‘확인 불가’로 표시한다. 인증 실패 시 실행 환경의 Codex 로그인을 점검하며, 화면에서 로그인·계정 전환이나 개인 설정 변경을 수행하지 않는다.
+
+AI 메뉴에서 선택한 새 대화 기본 모델·추론 강도는 즉시 Daemon의 현재 데이터 영역에 저장된다. 기존 대화의 설정은 유지한다. 새 대화의 입력창에서 바꾼 선택은 그 대화에만 적용되고, 기본값을 바꾸지는 않는다. 지원하지 않는 저장값은 재선택을 요구하며 다른 모델로 자동 fallback하지 않는다. 두 화면의 동시 변경은 저장 버전으로 판정하고, 충돌 시 최신 저장값을 다시 표시한다.
+
+860px 이상은 서비스 탐색·화면별 목록·Main을 나란히 표시한다. Chat·Settings의 목록 접힘 상태는 각각 유지한다. 860px 미만은 Module 선택·목록·Main을 한 단계씩 표시하며, 목록 복귀 버튼과 브라우저 뒤로/앞으로 가기를 지원한다. 열린 앱 안에서 대화별 초안·읽던 위치·최신 출력 따라가기 여부와 목록 위치를 유지한다. 이전 기록을 추가하면 기준 메시지의 화면 위치를 보정하며, 기록 교체로 기준 메시지가 사라졌을 때는 가능한 기존 스크롤 위치로 복귀한다. 읽는 도중의 새 출력은 강제 이동하지 않고 ‘최근 내용으로 이동’으로 확인한다.
+
+미전송 초안·스크롤 위치의 새로고침 후 영구 복원은 제공하지 않는다. 탐색 이력에는 화면·선택만 기록하고, Daemon의 `storeId`와 Workspace가 다르면 이전 대화 식별자를 적용하지 않는다.
 
 ### 종료와 소유권
 
@@ -125,7 +138,9 @@ UI와 headless는 `/ws`의 **protocol 2**를 사용한다. 최초 프레임은 `
 | 요청 | params |
 | --- | --- |
 | `runtime.get`, `models.list`, `chats.list` | `{}` |
-| `chats.create` | `{id: UUID, title, selection: {model, effort}}` |
+| `settings.get` | `{}` → `{revision, defaults: {model, effort}}` |
+| `settings.update` | `{expectedRevision, defaults: {model, effort}}` → 저장된 설정 |
+| `chats.create` | `{id: UUID, title, selection?: {model, effort}}` |
 | `chats.recover`, `chats.get`, `chats.watch` | `{chatId: UUID}` |
 | `chats.timeline` | `{chatId, before?: 이전 응답의 before}` |
 | `chats.configure` | `{chatId, selection: {model, effort}}` |
@@ -134,6 +149,12 @@ UI와 headless는 `/ws`의 **protocol 2**를 사용한다. 최초 프레임은 `
 | `permissions.respond` | `{chatId, permissionId, decision: "allow" 또는 "deny"}` |
 
 `chats.get`과 `chats.watch`는 현재 대화와 최신 timeline을 반환한다. 이전 기록은 `hasOlder`·`before`를 사용해 조회한다. 알림 연결을 닫아도 실행은 계속된다. 생성·입력 ID는 UUID, 제목은 1~100자, 입력은 공백 제거 후 1~32,000자다. UI 제목은 첫 입력 텍스트에서 결정하며 부가 AI 호출을 하지 않는다.
+
+`runtime.get`과 최초 `ready.info`에는 데이터 영역의 안정적인 `storeId`가 포함된다. 이는 탐색 구분용이며 인증 정보가 아니다. protocol 2에서 필드를 추가하고 `chats.create.selection`을 선택 사항으로 확장했다. 기존에 선택값을 명시하는 호출은 그대로 사용할 수 있다.
+
+`chats.create`에서 선택값을 생략하면 Daemon이 접수 시 확인한 저장 기본값을 사용한다. 같은 생성 ID·제목을 다시 조회/생성하면 최초에 보관한 선택값을 유지하며 그 사이 바뀐 기본값으로 Agent를 다시 만들지 않는다. 명시한 선택값이나 제목이 기존 생성 내용과 다르면 `CREATION_CONFLICT`다.
+
+`settings.update`는 모델 지원을 확인한 뒤 `expectedRevision`이 현재 버전과 같을 때만 저장하고 버전을 하나 증가시킨다. 다르면 `SETTINGS_CONFLICT`, 미지원 선택은 `MODEL_UNSUPPORTED`, 저장 장애는 `STORAGE_UNAVAILABLE`다. 성공하면 다른 연결에 `changed`를 보내 재조회를 유도한다. 응답 유실은 성공·실패로 추정하거나 자동 재저장하지 않고 `settings.get`으로 현재 버전·값을 확인한다. 이 조회는 현재 저장 상태이며 특정 유실 요청의 성공 영수증은 아니다. 그 뒤 의도한 값과 다를 때 사용자가 최신 버전으로 새 변경을 요청한다.
 
 ### UI 없는 공통 호출 도구
 
@@ -155,11 +176,33 @@ npm run rpc -- --file .worknaru-test/request.json --watch
 
 같은 파일의 `method`·`params`를 표에 맞춰 바꿔 조회·설정·승인·취소한다. 예를 들어 취소는 `{"method":"messages.cancel","params":{"chatId":"대화 UUID"}}`, 권한 응답은 `{"method":"permissions.respond","params":{"chatId":"대화 UUID","permissionId":"조회한 권한 ID","decision":"deny"}}`다. 생성·입력 ID는 요청마다 한 번 정하고 응답을 잃었다고 새 ID를 만들어 재전송하지 않는다. 실제 테스트에서는 아래의 모델 확인을 강제하는 시험 진입점을 사용한다.
 
+새 대화 기본값도 UI 없이 조회·변경한다. 다음 예제의 `expectedRevision`은 반드시 직전 조회의 실제 값으로 바꾼다. 이 예제는 설정 변경이며 AI 입력을 보내지 않는다.
+
+```powershell
+@{ method = 'settings.get'; params = @{} } |
+  ConvertTo-Json -Depth 4 | Set-Content .worknaru-test/request.json
+npm run rpc -- --file .worknaru-test/request.json
+
+# 조회 결과가 revision 0인 경우의 예. 다른 값이면 해당 숫자로 변경한다.
+@{ method = 'settings.update'; params = @{ expectedRevision = 0; defaults = @{ model = 'gpt-5.6-luna'; effort = 'low' } } } |
+  ConvertTo-Json -Depth 4 | Set-Content .worknaru-test/request.json
+npm run rpc -- --file .worknaru-test/request.json
+
+# 저장된 기본값으로 생성만 수행하며 입력은 별도로 보낸다.
+@{ method = 'chats.create'; params = @{ id = [guid]::NewGuid().ToString(); title = '기본값으로 만든 대화' } } |
+  ConvertTo-Json -Depth 4 | Set-Content .worknaru-test/request.json
+npm run rpc -- --file .worknaru-test/request.json
+```
+
 ## 저장과 결과 불명 처리
 
-WorkNaru SQLite에는 대화와 Agent의 연결, 생성 요청의 재식별 정보, 미확정 입력·설정·권한 처리 정보만 저장한다. native 세션·timeline·Provider 전달 장부는 Paseo가 소유한다. WorkNaru가 별도의 Agent 실행 상태 기계를 복제하지 않는다.
+WorkNaru SQLite에는 대화와 Agent의 연결, 생성 요청의 재식별 정보, 미확정 입력·설정·권한 처리 정보와 새 대화 기본값을 저장한다. native 세션·timeline·Provider 전달 장부는 Paseo가 소유한다. WorkNaru가 별도의 Agent 실행 상태 기계를 복제하지 않는다.
+
+기존 Paseo 기반 데이터에는 `chat_settings` singleton 테이블을 추가한다. 기존 chats·Agent 연결은 변경하지 않으며, 처음 한 번 기본값 `gpt-5.6-luna / low`, 버전 0, 고유 `storeId`를 저장한다. 이후에는 저장된 값과 식별자를 유지한다. 다른 데이터 영역은 독립된 기본값과 식별자를 사용한다. 이는 현재 Paseo 데이터의 추가 설정이며 구형 ACP 데이터 이식은 아니다. 선택값은 사용할 때 지원 여부를 검증한다.
 
 생성은 안정적인 ID와 요청 저장 → `idempotencyKey`로 Agent 생성(`initialPrompt` 없음) → Agent 연결 저장 → 별도 `messageId` 입력 순서다. 생성 응답이나 연결 저장 실패는 `chats.recover`에서 같은 생성 식별자로 확인한다. 입력·권한 응답 결과가 불명확하면 자동 재전송하지 않고 현재 상태와 기록을 조회한다.
+
+첫 생성의 모델 조회·지원 검증도 요청 식별자를 저장한 뒤 수행한다. 이 검증이 실패하면 Agent나 입력을 만들지 않고 생성 중 대화와 앱 안의 초안을 유지한다. `chats.recover` 역시 저장된 선택의 지원 여부를 다시 검사한다. 지원하지 않는 선택은 자동 변경하지 않으며, 기존 초안을 확인·복사해 지원하는 선택의 새 대화에서 이어갈 수 있다. 설정 저장 장애가 발생해도 성공한 기존 대화·기록 조회는 표시하며 새 입력은 차단한다.
 
 Daemon은 대화별 짧은 접수 구간을 직렬화한다. 실행·승인·취소·결과 불명 상태에서는 새 입력을 거절하고, 실행 전체 동안 접수 잠금을 유지하지 않아 취소·권한 응답은 사용할 수 있다. 두 client의 입력·승인도 같은 판정을 받는다. 모델·추론 변경은 유휴 상태에서만 적용하고 실제 설정을 다시 확인한다. 부분 실패에서는 실제 표시값을 확인·재설정하기 전까지 입력을 막는다.
 
@@ -177,6 +220,8 @@ npm run test:web    # Edge의 새 Chat과 공통 control·디자인 시안 검�
 ```
 
 기본 브라우저 시험 포트는 `15174`이며 충돌 시 `WORKNARU_TEST_WEB_PORT`를 지정한다. 시험 데이터·브라우저 profile은 `.worknaru-test` 아래에 둔다. fake 시험은 실제 SQLite 저장 실패, 생성/전달/승인 응답 유실, 두 client의 경쟁, 부분 설정, 재접속과 재시작을 검사한다. 별도 프로세스 시험은 정상·강제 종료, 자식 프로세스 정리, 포트 충돌, 같은 새 데이터로 재기동과 UI 없는 동일 API를 확인한다.
+
+새 계약을 바꾸면 `tests/chat-daemon.test.mjs`의 UI 없는 WS/RPC 호출과 `tests/chat-service.test.mjs`의 저장·재시작·충돌·실패 시험을 함께 갱신하고 `npm run test:daemon`을 통과시킨다. Settings·모델 조회 복구·긴 대화·모바일 탐색은 `tests/chat-web.spec.mjs`의 실제 제품 경로에서 검사한다. `design-prototype`·공통 control 시험은 시안/공통 표현 검증이며 제품 기능 지원의 증거로 대신하지 않는다.
 
 ### 실제 AI 응답 검증
 
@@ -197,6 +242,10 @@ npm run test:live:paseo      # 첫 입력·후속 입력·취소 3회
 2026-09-10 기본 진입점 전환과 전용 임시 경로 적용 후 제품 실검증 5회가 다시 통과했다. 전체 동작 검사 26개·브라우저 검사 24개, 정상 개발 명령의 빌드·브라우저 자동 연결·새로고침·headless·종료도 확인했다. 모든 실제 입력은 `gpt-5.6-luna / low`였으며 개인 설정·인증은 변경되지 않았다.
 
 같은 날 독립 리뷰에서 발견한 지연 취소의 후속 입력 오취소와 새 대화 초안 재등장을 수정했다. 수정 전 실패를 확인한 회귀 시험을 포함해 전체 동작 27개·브라우저 25개가 통과했다. 변경된 제품 취소 경로는 `gpt-5.6-luna / low` 입력 1회로 추가 확인했으며, 취소 완료·소유 runtime 정리·개인 설정 무변경을 검증했다.
+
+2026-09-10 #42의 Chat·Settings 복구에서는 타입 검사, 전체 Node 시험 32개, 브라우저 37개(전체 36개와 동일 빌드의 추가 짧은 화면 시험 1개)가 통과했다. Node 24.18.0·npm 11.14.1·Codex 0.153.4·Edge 152.0.4191.66 환경이다. 브라우저 확대 배치는 CSS zoom 2로 확인했으며 실제 브라우저 UI의 200% 확대 조작이나 스크린리더 낭독을 대신하지 않는다. 실모델은 Settings 기본값 저장·재시작 보존을 포함한 제품 5회 입력과 마지막 조회 처리 보강 후 첫/후속 입력 2회, 총 7회를 `gpt-5.6-luna / low`로 확인했다. 각 입력·권한 응답·취소 전에 지원과 native 실제 적용값을 확인했고 소유 runtime 종료·개인 설정 무변경을 검증했다. 기존 최초 점검의 2회 입력은 이 구현 검증 7회와 별도다.
+
+PR #43의 GPT 아스트라 독립 리뷰에서 첫 생성의 모델 검증 실패 시 초안 유실과 Settings 저장 장애 시 기존 기록 표시 차단을 재현해 수정했다. 두 제품 회귀 시험은 수정 전 실패·수정 후 통과했고 독립 재검토에서도 해결을 확인했다. 최종 타입 검사·빌드, Node 32개·브라우저 39개(제품 18·공통 control 13·시안 8)가 통과했다. 수정 후 같은 환경에서 제품 실검증 5회 입력을 추가해 읽기·후속 입력·허용·재시작 후 거절·취소를 확인했다. 모두 `gpt-5.6-luna / low`로 매 입력·권한 응답·취소 전에 지원과 native 실제 적용값을 확인했으며 소유 runtime 종료·개인 설정 무변경을 검증했다. #42 구현·리뷰 대응의 실제 입력 합계는 12회이며 최초 점검 2회는 별도다.
 
 ### 디자인 컨셉 프로토타입
 
