@@ -9,11 +9,13 @@
 Windows에서 **Node.js 24.18 이상 24.x**, **PowerShell 7**, **Codex CLI와 기존 로그인**을 준비하고 저장소 루트에서 실행합니다. Paseo의 native 패키지 설치 script를 허용해야 합니다.
 
 ```powershell
-npm ci --cache .npm-cache
+npm ci --cache .npm-cache   # 최초 설치 또는 의존성 변경 시
 npm run dev
 ```
 
 최신 코드를 빌드하고 전용 runtime·WorkNaru Daemon·Vite를 시작한 뒤 브라우저를 엽니다. 기본 UI는 `http://127.0.0.1:15173`, 제품 Daemon은 `ws://127.0.0.1:4310/ws`이며 화면은 자동 연결됩니다. 포트가 사용 중이면 `npm run dev -- --web-port 15175 --daemon-port 14310`처럼 변경합니다.
+
+UI 소스 변경은 자동 반영됩니다. Daemon 코드를 바꾸면 Ctrl+C로 종료한 뒤 다시 실행합니다. `dev:web`과 `preview:web`은 UI만 실행하므로 별도 Daemon 연결이 필요합니다. 명령별 차이와 두 터미널에서 실행하는 예제는 [개발 안내](docs/development.md#실행-명령의-차이)를 참고하세요.
 
 새 Chat에서 모델·추론 강도를 고르고 첫 입력과 후속 질문을 보낼 수 있습니다. Codex 도구 실행, 추가 권한의 1회 허용·거절, 취소와 새 기록의 재시작 조회를 제공합니다. Workspace 안의 파일 수정은 기본 허용하며 추가 권한이 필요한 작업만 요청 시 승인합니다.
 
@@ -146,7 +148,7 @@ Module 등록, 화면 연결과 AI 기능 사용의 구체적인 흐름은 [Modu
 
 첫 구현의 저장소 구성과 큰 책임 경계는 [초기 저장소 구성 설계](docs/design/repository-structure.md)에서 설명합니다. 세부 폴더·파일 배치는 구현하면서 정합니다.
 
-공통 화면과 첫 Chat은 [승인된 UI 기준](docs/design/workspace-chat-ui.md)을 따릅니다. 공통 서비스 탐색과 Module 내부 탐색을 분리하고, Module이 자신의 목록과 본문을 구성합니다.
+현재 Chat의 배색·공통 control·권한 패널은 [Design System](docs/design/design-system.md)을 따릅니다. [공통 UI 기준](docs/design/workspace-chat-ui.md)은 현재 Chat 동작과 과거에 승인한 전체 화면 시안을 구분합니다. 서비스 탐색과 Module 내부 탐색을 분리하는 설계 원칙은 유지하며, 현재 제공하는 화면과 기능의 범위는 [개발 안내](docs/development.md)를 기준으로 확인합니다.
 
 화면 기술은 [제품 방향에 따른 비교](docs/research/2026-09-09-web-ui-technology.md)를 근거로 React·TypeScript·Vite의 첫 구현을 검증합니다. 선택 제안과 결정 상태는 [ADR-0015](docs/adr/0015-use-react-typescript-and-vite-for-web-ui.md)에 기록합니다.
 

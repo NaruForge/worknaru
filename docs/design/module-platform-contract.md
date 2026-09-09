@@ -7,9 +7,9 @@
 
 이 문서는 Module과 플랫폼의 연결 구조, 동작 기준과 첫 검증 범위를 설명한다. 결정 근거와 상태는 해당 ADR에서, 작업 진행은 GitHub Project에서 관리한다. 아래의 연산 이름과 데이터 표현은 상세 설계를 위한 설명용이며 실제 API 이름·전송 형식의 확정이나 구현 완료를 뜻하지 않는다. 후속으로 명시한 사항은 별도로 설계한다.
 
-요청·실시간 상태 전달·재접속을 구체화한 후속 내용은 [화면과 Daemon의 통신 설계](client-daemon-protocol.md)를 참고한다. 전송 방식의 결정 근거와 상태는 [ADR-0011](../adr/0011-use-websocket-for-client-daemon-communication.md)에서 관리한다.
+현재 구현은 [Paseo 전환 #35](https://github.com/NaruForge/worknaru/issues/35)의 작은 Chat 흐름이다. WorkNaru는 제품 API와 대화·Agent 연결을, Paseo는 Agent 실행·native 세션·timeline을 소유한다. 실제 호출은 [개발 안내의 protocol 2](../development.md#공통-daemon-계약)를 따른다. 아래 Module 등록·업무 연결 예시는 후속 Module을 위한 설계이며 현재 제공하는 API 목록이 아니다.
 
-평상시 기록과 재시작 시 처리 규칙의 후속 초안은 [Chat의 기록 저장과 복구 설계](chat-storage-and-recovery.md)를 참고한다.
+[화면과 Daemon의 통신 설계](client-daemon-protocol.md)와 [Chat의 기록 저장과 복구 설계](chat-storage-and-recovery.md)는 초기 상세 설계의 기록으로 보존한다. WebSocket 선택은 [ADR-0011](../adr/0011-use-websocket-for-client-daemon-communication.md), 현재 저장·복구 동작은 [개발 안내](../development.md#저장과-결과-불명-처리)를 기준으로 확인한다.
 
 ## 1. 쉽게 보는 연결 방식
 
@@ -29,7 +29,7 @@ Module은 자신의 업무를 맡고, 공통 기능이 필요할 때 플랫폼�
 - Module은 업무 서비스이며, 업무 화면·규칙·데이터와 결과를 소유한다. [ADR-0006](../adr/0006-define-modules-as-business-services.md)
 - 업무 데이터와 AI Session은 별도로 관리하고 필요에 따라 연결한다. [ADR-0007](../adr/0007-separate-business-data-from-ai-sessions.md)
 - Chat은 첫 기본 제공 Module이다. 다른 Module은 Chat을 거치지 않고 플랫폼의 AI 기능을 사용한다. [ADR-0008](../adr/0008-provide-chat-as-a-default-module.md)
-- 웹과 데스크톱은 같은 WorkNaru Daemon의 상태와 실행 기능을 사용한다. Agent 내부 실행은 Paseo에 위임하도록 결정했으며, Module은 기존처럼 플랫폼 계약을 사용한다. [ADR-0016](../adr/0016-use-paseo-for-agent-management.md). 현재 코드는 Migration 전 ACP 구현이다.
+- 웹과 데스크톱은 같은 WorkNaru Daemon의 상태와 실행 기능을 사용하는 구조를 따른다. 현재 구현은 Agent 내부 실행을 전용 Paseo에 위임하며, Module과 UI는 WorkNaru 계약을 사용한다. [ADR-0016](../adr/0016-use-paseo-for-agent-management.md). 데스크톱 앱과 범용 Module 등록 구현까지 완료했다는 뜻은 아니다.
 
 이 설계는 위 경계를 바탕으로 Module 등록 정보와 공통 기능 호출·상태 전달 계약을 구체화한다. UI 프레임워크, 전송 기술, 데이터베이스나 Module의 실행 언어는 선택하지 않는다.
 
@@ -42,12 +42,15 @@ Module은 자신의 업무를 맡고, 공통 기능이 필요할 때 플랫폼�
           └─ 플랫폼 기능 호출·상태 구독
                       ↕ 공통 클라이언트–Daemon 계약
 WorkNaru Daemon
-  호출 검증 / Workspace 접근 / Session·AI 실행 / 상태·기록
-                      ↕ ACP 연결
-외부 AI 에이전트
+  호출 검증 / Workspace 접근 / Module 업무 / 대화·Agent 연결
+                      ↕ WorkNaru 연결 코드
+전용 Paseo runtime
+  Provider 연결 / Agent 실행·취소 / native 세션·timeline
+                      ↕ Provider별 연결
+외부 AI 에이전트 (현재 Codex)
 ```
 
-‘공통 화면’은 클라이언트에서 Module 화면을 열고 닫는 플랫폼 부분을 가리킨다. AI 실행과 공유 상태의 원본은 Daemon에 있다. 도식의 Module 화면은 업무 서비스의 UI 부분이며, Module의 모든 업무 처리가 브라우저에서 실행된다는 뜻은 아니다. 문서 파싱·내보내기 같은 업무 처리의 실행 위치는 후속 설계 대상이다.
+‘공통 화면’은 클라이언트에서 Module 화면을 열고 닫는 플랫폼 부분을 가리킨다. UI는 WorkNaru Daemon을 통해 공유 상태를 조회·제어하고, Daemon은 Agent 내부 실행과 기록을 Paseo에 맡긴다. 도식의 Module 화면은 업무 서비스의 UI 부분이며, Module의 모든 업무 처리가 브라우저에서 실행된다는 뜻은 아니다. 문서 파싱·내보내기 같은 업무 처리의 실행 위치는 후속 설계 대상이다.
 
 ## 4. Module 등록과 화면 수명
 
@@ -74,11 +77,11 @@ Module은 다음 정보를 선언하고, 플랫폼은 사용할 수 있는 등�
 
 화면을 닫거나 다른 Module로 이동하면 화면의 구독과 UI 자원을 해제한다. 이것을 AI 취소, Session 삭제 또는 Module 제거로 취급하지 않는다. 저장하지 못한 업무 입력이 있다면 Module이 이동을 보류할 수 있도록 공통 화면에 알리는 계약을 둔다.
 
-Module 전체를 비활성화·제거하는 기능은 화면 닫기와 구분하며, 진행 중인 업무와 데이터 처리 정책이 정해지기 전에는 첫 검증에 포함하지 않는다. 데스크톱 앱·Daemon 자체의 종료는 [ADR-0002](../adr/0002-use-daemon-core-with-web-and-desktop-clients.md)의 실행 방식별 정책을 그대로 따른다.
+Module 전체를 비활성화·제거하는 기능은 화면 닫기와 구분하며, 진행 중인 업무와 데이터 처리 정책이 정해지기 전에는 첫 검증에 포함하지 않는다. 앱·Daemon 자체의 종료는 [ADR-0016의 실행 소유권](../adr/0016-use-paseo-for-agent-management.md#daemon과-실행-수명)을 따른다. 현재 개발·독립 실행의 명시적 종료 방법은 [개발 안내](../development.md#종료와-소유권)에 있다.
 
 ## 5. 공통 기능 호출
 
-아래 이름은 기술 선택과 무관한 설명용 연산이다. HTTP 주소, WebSocket 메시지 또는 실제 SDK 함수명을 확정하지 않는다. 요청에는 플랫폼이 검증한 호출자·Module·작업 환경이 연결되며, 요청 본문의 `moduleId`나 리소스 식별자만으로 접근을 허용하지 않는다.
+아래 `sessions.*`, `links.*`, `runs.*`, `approvals.*`는 후속 Module 계약을 설명하는 연산이다. 현재 Chat의 `chats.*`, `messages.*`, `permissions.respond`와 실제 호출 형식은 [개발 안내](../development.md#공통-daemon-계약)를 따른다. Module 계약에서는 플랫폼이 검증한 호출자·Module·작업 환경을 연결하고, 요청 본문의 `moduleId`나 리소스 식별자만으로 접근을 허용하지 않는 기준을 둔다.
 
 | 연산 | 요청의 핵심 정보 | 돌려주는 정보·효과 |
 | --- | --- | --- |
@@ -124,7 +127,7 @@ Module 전체를 비활성화·제거하는 기능은 화면 닫기와 구분하
 6. 사용자가 중지를 누르면 `runs.cancel`을 요청한다. Chat은 즉시 완료로 표시하지 않고 실제 종료 상태를 기다린다.
 7. 완료·취소·실패 상태와 확인 가능한 기록을 표시한다. 사용자가 화면을 다시 열면 Session 상태를 다시 조회한다.
 
-Chat의 화면 설정이나 대화 목록 표시 방식은 Chat이 소유한다. 플랫폼이 관리하는 실행·승인 기록의 별도 원본을 Chat에 만들지 않는다. 프로바이더가 보존하는 대화의 불러오기 범위는 기존 ACP 연결 결정에 따른다.
+Chat의 화면 설정이나 대화 목록 표시 방식은 Chat이 소유한다. 실행·승인 기록의 별도 원본을 화면에 만들지 않는다. 현재 native 세션·timeline의 소유와 재개는 [ADR-0016](../adr/0016-use-paseo-for-agent-management.md) 및 [개발 안내의 저장·복구 동작](../development.md#저장과-결과-불명-처리)을 따른다.
 
 ## 7. 사용자 개입, 실패와 재접속
 
@@ -158,7 +161,7 @@ Chat의 화면 설정이나 대화 목록 표시 방식은 Chat이 소유한다.
 
 ## 9. 첫 구현으로 검증할 범위와 남은 설계
 
-첫 검증 범위는 Chat 하나의 명시적 등록, 화면 열기·구독 해제, Session 생성·조회, 메시지 전송·응답 표시, 권한 승인, 취소·실패 표시와 UI 재접속이다. 업무 데이터 연결은 보고서·문서 정형화의 문서상 예시로 먼저 검토하고, 실제 Module 도입 시 구체화한다.
+초기 설계의 검증 범위는 Chat 하나의 명시적 등록, 화면 열기·구독 해제, Session 생성·조회, 메시지 전송·응답 표시, 권한 승인, 취소·실패 표시와 UI 재접속이었다. 현재 구현·검증 범위는 [#35](https://github.com/NaruForge/worknaru/issues/35)와 [개발 안내](../development.md)를 따른다. Module 등록과 업무 데이터 연결은 실제 업무 Module을 도입할 때 구체화한다.
 
 Module이 요구하는 기능 선언은 자동 권한 부여가 아니다. 공통 API는 호출 대상과 접근을 검증해야 한다. 같은 프로세스에서 실행하는 코드에 기능 객체를 전달하는 것만으로 보안 격리가 생기지는 않으므로, 외부 코드를 받기 전 신뢰 모델과 실행 격리를 별도로 결정해야 한다.
 
@@ -170,7 +173,7 @@ Module이 요구하는 기능 선언은 자동 권한 부여가 아니다. 공�
 | 업무 실행·저장 | Module의 업무 코드 실행 위치, 데이터 저장 인터페이스, 편집 버전 충돌 처리 |
 | Module 관리 | 활성화·해제·제거, 실행 중 변경, 외부 설치·신뢰·권한과 배포 방식 |
 
-외부 Plugin 설치, 범용 업무 흐름 엔진, 스케줄링과 Module 간 Session 공유는 첫 검증 범위에서 보류한다. 이 문서는 #3 전체 설계의 일부이며, 위 후속 설계를 해결하거나 범위를 합의하기 전에는 구현 준비가 모두 끝났다고 판단하지 않는다.
+외부 Plugin 설치, 범용 업무 흐름 엔진, 스케줄링과 Module 간 Session 공유는 첫 검증 범위에서 보류한다. 이 문서는 #3 전체 설계의 일부이며, 후속 설계는 해당 기능의 실제 요구가 생길 때 필요한 만큼 구체화한다.
 
 ## 10. 구현 시 확인할 사례
 
