@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { ChatStore } from '../dist/chat-store.js';
 import { ChatService } from '../dist/chat-service.js';
 import { FakeChatRuntime } from './fake-chat-runtime.mjs';
@@ -15,6 +16,81 @@ function fixture() {
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
 async function create(f) { const chat = await f.service.create(randomUUID(), '대화', selection); return { id: chat.id, agentId: f.store.get(chat.id).agentId }; }
+
+test('saved defaults survive restart, apply only to new chats and keep retried creation identity', async () => {
+  const f = fixture();
+  try {
+    const old = await create(f), initial = f.service.settings(), storeId = f.service.info().storeId;
+    const defaults = { model: 'fake-model', effort: 'medium' };
+    const saved = await f.service.updateSettings(initial.revision, defaults);
+    const id = randomUUID();
+    f.runtime.failCreationResponse = true;
+    await assert.rejects(f.service.create(id, 'defaults'));
+    assert.deepEqual(f.store.get(id).creation.selection, defaults);
+    await f.service.updateSettings(saved.revision, selection);
+    await f.service.create(id, 'defaults');
+    assert.deepEqual((await f.service.get(id)).chat.selection, defaults);
+    assert.deepEqual((await f.service.get(old.id)).chat.selection, selection);
+    await f.service.close();
+    f.store = new ChatStore(f.directory); f.service = new ChatService(f.runtime, f.store, f.directory);
+    assert.equal(f.service.info().storeId, storeId);
+    assert.deepEqual(f.service.settings(), { revision: saved.revision + 1, defaults: selection });
+    const fresh = await f.service.create(randomUUID(), 'new defaults');
+    assert.deepEqual(fresh.selection, selection);
+    assert.deepEqual((await f.service.get(id)).chat.selection, defaults);
+  } finally { await f.close(); }
+});
+
+test('concurrent default changes reject the stale revision and unsupported defaults do not fall back', async () => {
+  const f = fixture();
+  try {
+    const revision = f.service.settings().revision;
+    const attempts = await Promise.allSettled([
+      f.service.updateSettings(revision, { model: 'fake-model', effort: 'medium' }),
+      f.service.updateSettings(revision, { model: 'gpt-5.6-luna', effort: 'high' }),
+    ]);
+    assert.equal(attempts.filter(result => result.status === 'fulfilled').length, 1);
+    assert.equal(attempts.find(result => result.status === 'rejected').reason.code, 'SETTINGS_CONFLICT');
+    const current = f.service.settings();
+    await assert.rejects(f.service.updateSettings(current.revision, { model: 'missing-model', effort: 'low' }), { code: 'MODEL_UNSUPPORTED' });
+    assert.deepEqual(f.service.settings(), current);
+    f.runtime.catalog = async () => [];
+    await assert.rejects(f.service.create(randomUUID(), 'unsupported saved default'), { code: 'MODEL_UNSUPPORTED' });
+    assert.equal(f.runtime.createCalls.length, 0);
+    assert.equal(f.store.list().length, 0);
+  } finally { await f.close(); }
+});
+
+test('failed SQLite default writes keep the previous value and revision after restart', async () => {
+  const f = fixture();
+  try {
+    const initial = f.service.settings();
+    f.store.db.exec("CREATE TRIGGER fail_settings BEFORE UPDATE ON chat_settings BEGIN SELECT RAISE(ABORT, 'disk failure'); END;");
+    await assert.rejects(f.service.updateSettings(initial.revision, { model: 'fake-model', effort: 'medium' }), { code: 'STORAGE_UNAVAILABLE' });
+    assert.equal(f.service.info().storageAvailable, false);
+    await f.service.close();
+    f.store = new ChatStore(f.directory); f.service = new ChatService(f.runtime, f.store, f.directory);
+    assert.deepEqual(f.service.settings(), initial);
+  } finally { await f.close(); }
+});
+
+test('adding settings to an existing Paseo database preserves chats and initializes its identity once', async () => {
+  const f = fixture();
+  try {
+    const existing = await create(f);
+    await f.service.close();
+    const db = new DatabaseSync(join(f.directory, 'worknaru.sqlite'));
+    db.exec('DROP TABLE chat_settings'); db.close(); // Simulate the schema immediately before #42.
+    f.store = new ChatStore(f.directory); f.service = new ChatService(f.runtime, f.store, f.directory);
+    assert.deepEqual(f.service.settings(), { revision: 0, defaults: selection });
+    assert.equal(f.store.get(existing.id).agentId, existing.agentId);
+    const identity = f.service.info().storeId;
+    await f.service.close();
+    f.store = new ChatStore(f.directory); f.service = new ChatService(f.runtime, f.store, f.directory);
+    assert.equal(f.service.info().storeId, identity);
+    assert.deepEqual((await f.service.get(existing.id)).chat.selection, selection);
+  } finally { await f.close(); }
+});
 
 test('lost creation response reuses its persisted identity across a product restart', async () => {
   const f = fixture(), id = randomUUID();

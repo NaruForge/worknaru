@@ -12,6 +12,34 @@ const selection = { model: 'gpt-5.6-luna', effort: 'low' };
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const connect = async url => { const client = new ChatConnection(url, url => new WebSocket(url), false); await client.connect(); return client; };
 
+test('headless default settings notify other clients and a lost reply is resolved by reading', async () => {
+  const f = await chatFixture(), clients = []; let release;
+  try {
+    const one = await connect(f.server.url), two = await connect(f.server.url); clients.push(one, two);
+    const events = []; two.subscribe(event => events.push(event));
+    const initial = await one.call('settings.get', {});
+    const update = f.service.updateSettings.bind(f.service);
+    f.service.updateSettings = async (...args) => {
+      const result = await update(...args); await new Promise(resolve => { release = resolve; }); return result;
+    };
+    const defaults = { model: 'fake-model', effort: 'medium' };
+    const saving = one.call('settings.update', { expectedRevision: initial.revision, defaults });
+    const lost = assert.rejects(saving, { code: 'RESULT_UNKNOWN' });
+    while (!release) await tick();
+    one.close(); await lost; release();
+    const current = await two.call('settings.get', {});
+    assert.deepEqual(current, { revision: initial.revision + 1, defaults });
+    assert.ok(events.some(event => event.type === 'changed' && event.chatId === null));
+    await assert.rejects(two.call('settings.update', { expectedRevision: initial.revision, defaults: selection }), { code: 'SETTINGS_CONFLICT' });
+    const chat = await two.call('chats.create', { id: randomUUID(), title: 'headless defaults' });
+    assert.deepEqual(chat.selection, defaults);
+    const requestPath = join(f.directory, 'settings-request.json');
+    writeFileSync(requestPath, JSON.stringify({ method: 'settings.get', params: {} }));
+    const rpc = await promisify(execFile)(process.execPath, ['dist/rpc.js', '--url', f.server.url, '--file', requestPath], { windowsHide: true });
+    assert.deepEqual(JSON.parse(rpc.stdout).result, current);
+  } finally { release?.(); for (const client of clients) client.close(); await f.close(); }
+});
+
 test('UI/headless contract rejects old clients and non-loopback browser origins', async () => {
   const f = await chatFixture();
   try {
@@ -26,7 +54,7 @@ test('UI/headless contract rejects old clients and non-loopback browser origins'
     const client = await connect(f.server.url);
     try {
       const info = await client.call('runtime.get', {}); assert.equal(info.protocol, 2);
-      assert.deepEqual(Object.keys(info).sort(), ['connected', 'protocol', 'storageAvailable', 'workspace']);
+      assert.deepEqual(Object.keys(info).sort(), ['connected', 'protocol', 'storageAvailable', 'storeId', 'workspace']);
     } finally { client.close(); }
   } finally { await f.close(); }
 });

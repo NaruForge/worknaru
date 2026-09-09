@@ -12,6 +12,8 @@ export async function callChat<M extends ChatMethod>(service: ChatService, metho
   switch (method) {
     case 'runtime.get': result = service.info(); break;
     case 'models.list': result = await service.models(); break;
+    case 'settings.get': result = service.settings(); break;
+    case 'settings.update': result = await service.updateSettings(p.expectedRevision as number, p.defaults as CallParams<'settings.update'>['defaults']); break;
     case 'chats.list': result = await service.list(); break;
     case 'chats.create': result = await service.create(p.id as string, p.title as string, p.selection as CallParams<'chats.create'>['selection']); break;
     case 'chats.recover': result = await service.recover(p.chatId as string); break;
