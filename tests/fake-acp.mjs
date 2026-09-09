@@ -1,7 +1,7 @@
 // A separate real process speaking ACP v1, including a descendant for cleanup tests.
 import { createInterface } from 'node:readline';
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { spawn } from 'node:child_process';
 
@@ -136,6 +136,8 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     const chunks = text === 'large' ? ['보존된 출력', 'x'.repeat(17_000)] : [`답변 ${history.length}: `, text === 'recall-first' ? history[0] : text];
     let index = 0;
     const timer = setInterval(() => {
+      // A test-owned gate releases output only after every client has disconnected.
+      if (text === 'gated' && !existsSync(join(dirname(process.env.TEST_AGENT_LOG), 'release-output'))) return;
       if (index < chunks.length) send({ method: 'session/update', params: { sessionId: params.sessionId, update: {
         sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: chunks[index++] },
       } } });

@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "build": "tsc && npm run build:web",
+    "build": "npm run build:daemon && npm run build:web",
     "build:web": "tsc -p tsconfig.web.json && vite build",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.web.json",
     "dev:web": "vite",
@@ -19,7 +19,10 @@
     "test:live": "npm run build && node --test tests/live-acp.mjs",
     "test:web": "npm run build && playwright test",
     "test:web:live": "npm run build && node --test tests/web-live.mjs",
-    "test:files:live": "npm run build && node --test tests/files-live.mjs"
+    "test:files:live": "npm run build && node --test tests/files-live.mjs",
+    "build:daemon": "tsc",
+    "rpc": "node dist/rpc-client.js",
+    "test:daemon": "npm run build:daemon && node --test tests/daemon.test.mjs tests/acp.test.mjs tests/settings.test.mjs tests/file-tools.test.mjs tests/web-client.test.mjs tests/rpc-client.test.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/codex-acp": "1.10.0",

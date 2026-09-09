@@ -42,6 +42,24 @@ npm run dev -- --hub
 
 포트가 사용 중이거나 Windows에서 예약된 경우 `npm run dev -- --web-port 15174 --daemon-port 14310`처럼 지정합니다. UI 주소와 연결 설정은 함께 맞춰집니다. 상세 옵션, 개별 서버 실행, 실제 AI 검증은 [로컬 개발 안내](docs/development.md)를 참고하세요.
 
+### UI 없이 Daemon 실행·호출
+
+업무 기능은 Daemon 계약으로 요청·조회·제어합니다. 공유 상태와 최종 판정은 Daemon 또는 Daemon이 관리하는 Module 서비스가 소유하며, Web UI는 그 계약을 사용하는 클라이언트입니다. 초안·탐색·화면 상태는 클라이언트가 관리할 수 있습니다.
+
+설치 후 다음 명령은 Web 빌드·Vite·브라우저 없이 Daemon을 실행합니다. 저장·조회만 확인하려면 Codex 로그인 없이 사용할 수 있습니다.
+
+```powershell
+npm run build:daemon
+$env:WORKNARU_TOKEN = node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64url'))"
+npm start -- --data-dir .worknaru-dev --workspace . --port 4310
+```
+
+다른 터미널에 같은 `WORKNARU_TOKEN`을 설정한 뒤 `npm run rpc -- --url ws://127.0.0.1:4310/ws`로 지원 기능과 저장 세대를 조회합니다. 실제 AI 실행·설정 변경·파일 승인은 Daemon을 `--acp --codex-path <codex.exe 경로>`와 함께 시작해야 합니다. 저장된 기록은 같은 데이터 경로에서 유지됩니다.
+
+`npm run test:daemon`은 가짜 ACP를 사용하는 Daemon·접속 클라이언트·공통 호출 도구 검사이며 실제 모델 질문을 보내지 않습니다. `npm test`는 Web 빌드와 개발 실행기 검사까지 포함합니다. JSON 요청 파일·표준 입력을 이용한 설정·실행·승인·취소 예제는 [UI 없는 공통 호출 도구](docs/development.md#ui-없는-공통-호출-도구)를 참고하세요. 기존 `npm run chat`은 텍스트 대화용 개발 클라이언트이며 전체 업무 CLI는 아닙니다.
+
+독립 Daemon은 실행한 터미널에서 `Ctrl+C`로 종료합니다. 호출 도구의 `Ctrl+C`, 탭 닫기와 연결 종료는 해당 클라이언트만 닫습니다. 통합 개발 실행의 **개발 서버 종료**는 실행기가 소유한 Daemon·UI를 함께 정리하는 별도 운영 기능입니다.
+
 ## 플랫폼과 Module
 
 WorkNaru는 공통 작업 환경과 실행 기반을 제공하는 **플랫폼**과 실제 업무 서비스를 제공하는 **Module**로 구성됩니다. 이 절에서 제품의 핵심 개념과 책임 경계를 정의합니다. 선택의 근거와 영향은 [ADR-0006](docs/adr/0006-define-modules-as-business-services.md)에 기록합니다.

@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
 import { request as httpRequest } from 'node:http';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { WebClient } from '../dist/web-client.js';
@@ -181,4 +182,26 @@ test('shutdown checks all runs, rechecks after status, and cleans an active ACP 
   const restarted = await start(f);
   const reader = await connect(f, restarted.daemon);
   assert.equal((await reader.call('runs.get', { runId: run.result.run.runId })).result.state, 'cancelled');
+});
+
+test('development server serves UI sources but rejects private workspace data', { timeout: 20_000 }, async (t) => {
+  const f = fixture(t);
+  const marker = join(f.root, 'private-probe.txt');
+  writeFileSync(marker, 'PRIVATE_TEST_MARKER');
+  const server = spawn(process.execPath, [join(projectRoot, 'node_modules/vite/bin/vite.js'), '--port', '0', '--strictPort'], {
+    cwd: projectRoot, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, TEMP: f.root, TMP: f.root },
+  });
+  const exited = once(server, 'exit');
+  f.cleanups.push(async () => { if (server.exitCode === null) server.kill(); await deadline(exited); });
+  server.stderr.resume();
+  const origin = await deadline(new Promise((resolve, reject) => {
+    let output = '';
+    server.stdout.on('data', (chunk) => { output += chunk; const found = output.match(/http:\/\/127\.0\.0\.1:\d+/); if (found) resolve(found[0]); });
+    server.once('error', reject);
+    server.once('exit', () => reject(new Error('Development server exited before ready')));
+  }));
+  for (const path of ['/', '/main.tsx', '/workspace.tsx']) { const response = await fetch(origin + path, { signal: AbortSignal.timeout(5000) }); assert.equal(response.status, 200); await response.text(); }
+  const response = await fetch(origin + '/@fs/' + marker.replaceAll('\\', '/'), { signal: AbortSignal.timeout(5000) });
+  assert.equal(response.status, 403);
+  assert.equal((await response.text()).includes('PRIVATE_TEST_MARKER'), false);
 });

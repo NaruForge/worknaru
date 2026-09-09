@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { parseArgs } from 'node:util';
 import { WebSocket } from 'ws';
-import type { Run } from './store.js';
+import type { Run } from './public-contract.js';
 
 const { values } = parseArgs({ options: { url: { type: 'string' }, text: { type: 'string' }, session: { type: 'string' } } });
 if (!values.url || !values.text || !process.env.WORKNARU_TOKEN) {

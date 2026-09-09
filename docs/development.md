@@ -99,6 +99,141 @@ npm start -- --data-dir .worknaru-dev --workspace .
 
 ## 접속과 호출 예
 
+### UI 없는 공통 호출 도구
+
+관련 작업: [#23](https://github.com/NaruForge/worknaru/issues/23). `npm run build:daemon`은 TypeScript 서버·공통 코드·개발 클라이언트만 컴파일한다. `npm run test:daemon`은 Web 빌드·Vite·브라우저 없이 저장·ACP·설정·파일 승인·접속 클라이언트·RPC 도구의 Node 검사를 실행한다. 가짜 ACP를 사용하므로 유료 모델 질문이나 Codex 로그인이 필요하지 않다. 같은 패키지에서 의존성을 설치하며, `npm test`와 `npm run test:web`는 기존 전체 검증으로 유지한다.
+
+`npm run rpc`는 기존 Daemon 계약을 호출하는 개발용 도구다. UI를 띄우지 않고 기록 저장, 설정 변경, 실행과 취소, 파일 승인·거절을 요청한다. 업무별 전용 CLI나 자동 작업 실행기는 아니다.
+
+```powershell
+npm run build:daemon
+$env:WORKNARU_TOKEN = node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64url'))"
+npm start -- --data-dir .worknaru-dev --workspace . --port 4310
+# 실제 AI 실행이 필요하면 위 Daemon을 종료한 뒤 다음 명령으로 실행한다.
+npm start -- --data-dir .worknaru-dev --workspace . --port 4310 --acp --codex-path (Get-Command codex.exe).Source
+```
+
+다른 터미널에서 **같은** `WORKNARU_TOKEN`을 설정하고 다음 예제를 실행한다. URL은 실제 Daemon의 출력과 일치시킨다. 아래에서 `--silent`는 npm 안내 문구를 생략해 JSON만 파이프로 전달하기 위한 옵션이다.
+
+```powershell
+$rpcUrl = 'ws://127.0.0.1:4310/ws'
+$ready = npm run --silent rpc -- --url $rpcUrl | ConvertFrom-Json
+$ready.capabilities
+$ready.storeEpoch
+
+# 요청 파일을 사용할 때: 저장소 내부의 개발 임시 파일이다.
+New-Item -ItemType Directory -Force .worknaru-test | Out-Null
+@{ method = 'workspaces.get'; params = @{} } | ConvertTo-Json -Depth 10 |
+    Set-Content -Encoding utf8 .worknaru-test/rpc-request.json
+npm run --silent rpc -- --url $rpcUrl --request-file .worknaru-test/rpc-request.json
+```
+
+| 옵션 | 의미 |
+| --- | --- |
+| `--url` | 필수. `ws://127.0.0.1:<port>/ws` 형태의 로컬 Daemon 주소. URL 자격증명·query·fragment와 Hub 중계 주소는 받지 않는다. Hub와 함께 실행했어도 이 PC의 직접 Daemon 주소로 호출한다. |
+| `--request-file <파일>` | UTF-8 JSON 요청 하나. 원문과 전송 요청은 각각 64KiB 이하. 생략하면 연결의 `ready`를 출력하고 종료한다. |
+| `--request-file -` | 같은 JSON을 표준 입력에서 읽는다. |
+| `--no-key` | 키 없는 개발 실행에 명시적으로 사용한다. 환경 변수의 키를 전송하지 않는다. 기본은 `WORKNARU_TOKEN`을 사용하며 인증 실패 후 자동 전환하지 않는다. |
+| `--timeout-ms` | 연결 확인 및 요청 응답에 각각 적용하는 시간. 기본 60000ms, 1~2147483647 정수. `runs.watch` 초기 응답 이후에는 완료 대기 시간 제한을 두지 않는다. |
+| `--help` | 사용법 표시. |
+
+요청은 `{ method, params }`를 사용하고, 변경 요청에는 **직접 지정한** `requestId`, `storeEpoch`를 추가한다. `type`과 `callId`는 도구가 생성하므로 입력하지 않는다. 필드와 입력 검증은 기존 서버 계약을 사용하며 지원 여부는 `ready.capabilities`로 확인한다. 잘못된 식별자나 저장 세대를 자동으로 고치지 않는다.
+
+일반 호출은 기존 `response` 봉투 하나를 JSON으로 출력한다. `runs.watch`는 초기 응답과 이후 `run.changed`를 한 줄씩 출력하고 `completed`, `failed`, `cancelled`에서 종료한다. 저장 장애는 revision 증가 없이 전달될 수 있으므로 같은 revision의 알림도 출력하며, 더 오래된 revision만 제외한다. 정상 조회의 종료 코드 0은 조회 성공을 뜻하며, 조회한 Run 자체가 성공했다는 뜻은 아니다. 입력·연결·프로토콜·서버 오류는 종료 코드 1이고 진단은 표준 오류에 출력한다. 인증키는 출력하지 않는다. 응답에는 요청한 대화·파일 본문이 포함될 수 있다.
+
+다음 함수는 표준 입력으로 요청을 보내는 예제다. 업무 판정이나 자동 재시도는 하지 않는다.
+
+```powershell
+function Invoke-WorkNaruRpc([hashtable]$Request) {
+    $rpcJson = $Request | ConvertTo-Json -Depth 10
+    $rpcOutput = $rpcJson | node dist/rpc-client.js --url $rpcUrl --request-file -
+    if ($LASTEXITCODE -ne 0) { throw '호출 확인 실패. 변경 요청은 재전송 전에 접수 결과를 확인하세요.' }
+    return ($rpcOutput | ConvertFrom-Json).result
+}
+$workspace = Invoke-WorkNaruRpc @{ method = 'workspaces.get'; params = @{} }
+$createId = [guid]::NewGuid().ToString()
+$created = Invoke-WorkNaruRpc @{
+    method = 'sessions.create'; params = @{ workspaceId = $workspace.workspaceId; title = 'Headless 점검' }
+    requestId = $createId; storeEpoch = $ready.storeEpoch
+}
+$sessionId = $created.session.sessionId
+
+# AI 없이 저장·조회. 이 연산은 AI에게 질문하지 않는다.
+$appendId = [guid]::NewGuid().ToString()
+Invoke-WorkNaruRpc @{
+    method = 'messages.append'; params = @{ sessionId = $sessionId; text = '저장 확인' }
+    requestId = $appendId; storeEpoch = $ready.storeEpoch
+}
+Invoke-WorkNaruRpc @{ method = 'messages.list'; params = @{ sessionId = $sessionId } }
+```
+
+이하 AI 메타데이터·설정 변경·실행·승인은 `--acp`를 켠 Daemon에서 수행한다. `ai.get` 성공 후 제공자가 지원하는 모델·추론 강도로 설정한다. 설정과 인증 조회 자체는 모델 질문을 보내지 않는다.
+
+```powershell
+$info = Invoke-WorkNaruRpc @{ method = 'ai.get'; params = @{} }
+$info.models
+$selection = @{ model = 'gpt-5.6-luna'; reasoningEffort = 'low' }
+Invoke-WorkNaruRpc @{
+    method = 'settings.update'; params = @{ selection = $selection }
+    requestId = [guid]::NewGuid().ToString(); storeEpoch = $ready.storeEpoch
+}
+Invoke-WorkNaruRpc @{ method = 'settings.get'; params = @{} }
+Invoke-WorkNaruRpc @{
+    method = 'sessions.configure'; params = @{ sessionId = $sessionId; selection = $selection }
+    requestId = [guid]::NewGuid().ToString(); storeEpoch = $ready.storeEpoch
+}
+
+# 실제 모델 질문 1회.
+# 파일 승인 점검은 Workspace에 sample.txt를 준비한 뒤 text를
+# 'sample.txt를 읽고 마지막 문장을 검토 완료로 바꿔줘'로 바꿔 요청한다.
+$runRequestId = [guid]::NewGuid().ToString()
+$started = Invoke-WorkNaruRpc @{
+    method = 'runs.start'; params = @{ sessionId = $sessionId; text = '안녕하세요' }
+    requestId = $runRequestId; storeEpoch = $ready.storeEpoch
+}
+$runId = $started.run.runId
+@{ method = 'runs.watch'; params = @{ runId = $runId } } | ConvertTo-Json |
+    node dist/rpc-client.js --url $rpcUrl --request-file -
+```
+
+구독 도중 `Ctrl+C`는 연결만 닫으며 Run을 취소하지 않는다. 구독을 닫은 뒤 또는 별도 터미널에서 같은 키·URL·식별자로 다음 요청을 보낼 수 있다.
+
+```powershell
+$run = Invoke-WorkNaruRpc @{ method = 'runs.get'; params = @{ runId = $runId } }
+$run.tools | Format-List path,before,after,state,toolId
+
+# 실제 pending 수정안의 경로와 전체 before/after를 검토한 경우에만 응답한다.
+$toolId = ($run.tools | Where-Object state -eq 'pending' | Select-Object -First 1).toolId
+$decision = 'reject' # 검토 후 허용하려면 'allow'를 명시한다.
+Invoke-WorkNaruRpc @{
+    method = 'permissions.respond'; params = @{ runId = $runId; toolId = $toolId; decision = $decision }
+    requestId = [guid]::NewGuid().ToString(); storeEpoch = $ready.storeEpoch
+}
+
+# 진행 중인 실행을 명시적으로 중단할 때만 호출한다.
+Invoke-WorkNaruRpc @{
+    method = 'runs.cancel'; params = @{ runId = $runId }
+    requestId = [guid]::NewGuid().ToString(); storeEpoch = $ready.storeEpoch
+}
+```
+
+시간 초과·연결 유실로 변경 응답을 확인하지 못해도 서버가 이미 접수했을 수 있다. 도구는 자동 재전송하지 않고 사용한 요청 식별자와 저장 세대를 진단에 남긴다. 예를 들어 위 실행 요청의 응답을 놓쳤다면 다음처럼 **같은** 식별자를 조회한다.
+
+```powershell
+$receipt = Invoke-WorkNaruRpc @{
+    method = 'requests.get'
+    params = @{ workspaceId = $workspace.workspaceId; requestId = $runRequestId; storeEpoch = $ready.storeEpoch }
+}
+if ($receipt.found) {
+    $receipt.result
+    # 접수 당시 결과다. 현재 상태는 반환된 runId로 runs.get을 다시 호출한다.
+}
+```
+
+`found: false`와 조회 실패·저장 세대 불일치는 다르다. 도구는 어느 경우에도 새 요청으로 자동 재실행하지 않는다. 파일 적용 완료 여부는 Run의 파일 기록으로 확인하며, 결과 불명은 실제 파일 확인이 필요하다. 승인 대기와 만료 정책은 UI와 동일하고 연결이 없어도 자동 허용하지 않는다. Daemon을 종료하려면 소유 실행기나 Daemon 터미널을 사용한다.
+
+### 원시 WebSocket 봉투
+
 출력된 `ws://127.0.0.1:<port>/ws`에 연결한 뒤 첫 메시지로 아래 JSON을 보낸다. 클라이언트는 데몬 실행에 사용한 `WORKNARU_TOKEN`을 알고 있어야 한다. 토큰을 URL에 넣지 않는다.
 
 ```json
@@ -315,7 +450,7 @@ Windows의 예약 포트 범위 등으로 5173에서 `EACCES`가 발생하면 �
 }
 ```
 
-`decision`은 `allow` 또는 `reject`다. 성공 응답은 `{ accepted: true, requestId, run }`이고 접수 시점의 Run 스냅샷을 포함한다. `tools`에는 `toolId`, `path`, `before`, `after`, `state`, `errorCode`, `createdAt`이 있다. 상태는 `pending → approved → applying → completed` 또는 `rejected`, `failed`, `cancelled`, `unknown`이다. 내부 파일 식별자와 도구 연결 토큰은 클라이언트에 전달하지 않는다. ACP를 끈 기록 조회 실행에서도 파일 기록은 읽을 수 있지만 승인 응답은 받지 않는다. 터미널 Chat 클라이언트에는 승인 입력 UI가 없으므로 파일 승인은 Web UI에서 처리한다.
+`decision`은 `allow` 또는 `reject`다. 성공 응답은 `{ accepted: true, requestId, run }`이고 접수 시점의 Run 스냅샷을 포함한다. `tools`에는 `toolId`, `path`, `before`, `after`, `state`, `errorCode`, `createdAt`이 있다. 상태는 `pending → approved → applying → completed` 또는 `rejected`, `failed`, `cancelled`, `unknown`이다. 내부 파일 식별자와 도구 연결 토큰은 클라이언트에 전달하지 않는다. ACP를 끈 기록 조회 실행에서도 파일 기록은 읽을 수 있지만 승인 응답은 받지 않는다. 터미널 Chat 클라이언트에는 승인 입력 UI가 없으므로 Web UI 또는 공통 `rpc` 도구의 `permissions.respond`로 승인·거절한다.
 
 구현은 기존 ACP 연결을 유지하며, 대화별 Codex 설정으로 `worknaru_files` MCP stdio 도구 두 개(`read_text_file`, `edit_text_file`)를 제공한다. `codex-acp` 1.10.0의 표준 `mcpServers` 변환은 도구별 승인 모드와 시간 제한을 전달하지 않으므로 대화의 `CODEX_CONFIG`에 함께 전달한다. 이 두 내부 도구의 Codex 승인 모드는 `approve`, 호출 제한은 360초다. 이는 내부 도구 진입 시 중복 승인을 생략하는 설정이며 실제 파일 쓰기는 항상 WorkNaru의 사용자 승인을 기다린다. 다른 ACP 승인 요청은 자동 허용하지 않는다. 메타데이터 조회에는 파일 도구를 연결하지 않는다. [Codex 설정 계약](https://learn.chatgpt.com/docs/config-file/config-reference)
 
