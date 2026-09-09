@@ -185,11 +185,19 @@ export class ChatService {
         throw new ChatError('NOT_RUNNING', '취소할 실행이 없습니다.');
       if (this.storageAvailable) this.persist(() => this.store.setCancel(id));
       this.emit({ type: 'changed', chatId: id });
-      return { agentId: binding.agentId, sending: this.dispatching.get(id) };
+      return { agentId: binding.agentId, messageId: binding.pendingMessageId, executionId: actual.executionId, sending: this.dispatching.get(id) };
     });
     // A cancellation arriving during message admission must not run before that message starts.
     await admitted.sending?.catch(() => {});
-    await this.runtime.cancel(admitted.agentId);
+    await this.serial(id, async () => {
+      const current = this.store.get(id);
+      if (current.agentId !== admitted.agentId || current.pendingMessageId !== admitted.messageId) return;
+      const actual = await this.fresh(admitted.agentId);
+      if (!admitted.messageId && (!admitted.executionId || actual.executionId !== admitted.executionId)) return;
+      // Keep admission serialized through the cancellation acknowledgement. A late request must
+      // never reach a later input after the original turn's completion has cleared its binding.
+      await this.runtime.cancel(admitted.agentId);
+    });
     return { requested: true }; // Only a matching execution.finished event confirms cancellation.
   }
   async permission(id: string, permissionId: string, decision: 'allow' | 'deny'): Promise<{ resolved: true }> {

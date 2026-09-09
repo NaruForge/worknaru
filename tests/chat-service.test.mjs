@@ -73,6 +73,27 @@ test('cancel stays available while the delivery acknowledgement is pending', asy
   } finally { release?.(); await f.close(); }
 });
 
+test('a delayed cancellation never cancels the next input after its target has completed', async () => {
+  const f = fixture();
+  let release;
+  try {
+    const { id, agentId } = await create(f);
+    f.runtime.onSend = () => new Promise(resolve => { release = resolve; });
+    const sending = f.service.send(id, randomUUID(), 'first');
+    while (!release) await tick();
+    const cancelling = f.service.cancel(id);
+    await tick();
+    f.runtime.finish(agentId); await tick();
+    assert.equal((await f.service.get(id)).chat.status, 'ready');
+    f.runtime.onSend = undefined;
+    const nextId = randomUUID();
+    await f.service.send(id, nextId, 'next');
+    release(); await sending; await cancelling; await tick();
+    assert.equal(f.store.get(id).pendingMessageId, nextId);
+    assert.equal((await f.service.get(id)).chat.status, 'running');
+  } finally { release?.(); await f.close(); }
+});
+
 test('lost delivery response and idle after restart do not prove completion or cause resend', async () => {
   const f = fixture();
   try {
