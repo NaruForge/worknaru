@@ -46,7 +46,7 @@ test('closing a client during delivery loses its reply while execution and the c
     assert.equal((await second.call('chats.get', { chatId: id })).chat.status, 'ready');
     const requestPath = join(f.directory, 'request.json');
     writeFileSync(requestPath, JSON.stringify({ method: 'chats.list', params: {} }));
-    const rpc = await promisify(execFile)(process.execPath, ['dist/paseo-rpc.js', '--url', f.server.url, '--file', requestPath], { windowsHide: true });
+    const rpc = await promisify(execFile)(process.execPath, ['dist/rpc.js', '--url', f.server.url, '--file', requestPath], { windowsHide: true });
     const response = JSON.parse(rpc.stdout); assert.equal(response.result[0].id, id);
   } finally { release?.(); for (const client of clients) client.close(); await f.close(); }
 });

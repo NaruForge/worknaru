@@ -3,9 +3,6 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "bin": {
-    "worknaru": "dist/cli.js"
-  },
   "engines": {
     "node": ">=24.18.0 <25"
   },
@@ -20,22 +17,15 @@
     "preview:web": "vite preview",
     "start": "node dist/main.js",
     "test": "npm run build && node --test tests/*.test.mjs",
-    "chat": "node dist/chat-client.js",
-    "test:live": "npm run build && node --test tests/live-acp.mjs",
+    "test:live": "npm run build && node --test tests/chat-product-live.mjs",
     "test:web": "npm run build && playwright test",
-    "test:web:live": "npm run build && node --test tests/web-live.mjs",
-    "test:files:live": "npm run build && node --test tests/files-live.mjs",
-    "build:daemon": "tsc",
-    "rpc": "node dist/rpc-client.js",
+    "build:daemon": "node scripts/build-daemon.mjs",
+    "rpc": "node dist/rpc.js",
     "test:runtime": "npm run build:daemon && node --test tests/paseo-runtime.test.mjs",
     "test:live:paseo": "npm run build:daemon && node --test tests/paseo-live.mjs",
-    "start:paseo": "node dist/paseo-main.js",
-    "rpc:paseo": "node dist/paseo-rpc.js",
-    "test:daemon": "npm run build:daemon && node --test tests/daemon.test.mjs tests/acp.test.mjs tests/settings.test.mjs tests/file-tools.test.mjs tests/web-client.test.mjs tests/rpc-client.test.mjs tests/cli.test.mjs"
+    "test:daemon": "npm run build:daemon && node --test tests/chat-service.test.mjs tests/chat-daemon.test.mjs tests/paseo-chat-runtime.test.mjs tests/paseo-runtime.test.mjs"
   },
   "dependencies": {
-    "@agentclientprotocol/codex-acp": "1.10.0",
-    "@agentclientprotocol/sdk": "1.4.0",
     "@getpaseo/client": "0.8.0-beta.1",
     "@getpaseo/server": "0.8.0-beta.1",
     "react": "19.2.8",

@@ -38,7 +38,7 @@ test('real product UI/headless: tools, permission allow/deny, new-history restar
     await service.start(); server = await startChatDaemon(service, { port: 0, webRoot: join(root, 'dist', 'web') });
     client = new ChatConnection(server.url, url => new WebSocket(url), false); await client.connect();
     client.subscribe(event => { if (event.type === 'message.finished') finished.push(event); });
-    page = await browser.newPage(); await page.goto(`http://127.0.0.1:${server.port}/paseo.html`);
+    page = await browser.newPage(); await page.goto(`http://127.0.0.1:${server.port}/index.html`);
     await page.getByText('연결됨', { exact: true }).waitFor();
     if (chatId) { await page.getByRole('button').filter({ hasText: 'source.txt' }).click(); await page.getByRole('textbox', { name: '메시지', exact: true }).waitFor(); }
   }

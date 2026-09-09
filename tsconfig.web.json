@@ -11,5 +11,5 @@
     "verbatimModuleSyntax": true,
     "noEmit": true
   },
-  "include": ["web/**/*.ts", "web/**/*.tsx", "src/web-client.ts", "src/chat-state.ts"]
+  "include": ["web/**/*.ts", "web/**/*.tsx", "src/chat-connection.ts", "src/chat-model.ts"]
 }

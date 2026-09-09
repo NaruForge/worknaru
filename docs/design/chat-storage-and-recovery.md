@@ -1,5 +1,7 @@
 # Chat의 기록 저장과 복구 설계 초안
 
+> 이 문서는 ACP 기반 초기 상세 설계의 기록이다. [Paseo 전환 #35](https://github.com/NaruForge/worknaru/issues/35) 이후 WorkNaru는 대화 연결과 미확정 요청 정보만 저장하고 native 세션·timeline은 Paseo가 소유한다. 현재 저장·복구 동작은 [개발 안내](../development.md#저장과-결과-불명-처리)를 따른다. 아래 DB·Run·접수 장부의 배치는 현재 구현이 아니다.
+
 - 작성일: 2026-09-08
 - 관련 Work Item: [#3 플랫폼 초기 아키텍처 설계](https://github.com/NaruForge/worknaru/issues/3)
 - 제품 개념: [README](../../README.md)

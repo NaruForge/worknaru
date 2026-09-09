@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import { Button, IconButton } from './ui.js';
-import { Icon } from './icons.js';
+import { Button, IconButton } from '../ui.js';
+import { Icon } from '../icons.js';
 // The platform shell accepts optional navigation; Chat supplies its own list and body.
 export function WorkspaceShell({ name, online, sidebar, children, connection, settings, theme, toggleTheme, listOpen, toggleList, navigationLabel, devStop, sidebarLabel = 'Module 목록', chat, settingsActive = false, sectionLabel = '기본 제공 Module', stacked }: {
   name: string; online: boolean; sidebar?: ReactNode; children: ReactNode; connection: () => void;

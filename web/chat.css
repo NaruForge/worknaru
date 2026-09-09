@@ -1,0 +1,17 @@
+.chat-product .chat-connection-status{margin-left:auto;font-size:var(--font-hint);color:var(--text-secondary)}
+.chat-product .body{display:flex;flex:1;min-height:0}
+.chat-product .chat-navigation{width:260px;flex:none;display:flex}
+.chat-product .chat-navigation [aria-current=page]{background:var(--interaction-selected);color:var(--accent-background)}
+.chat-product .chat-heading{justify-content:space-between}
+.chat-product .chat-heading h1{font-size:var(--font-label);margin:0;overflow-wrap:anywhere}
+.chat-product [hidden]{display:none!important}
+.chat-product .chat-detail{border:1px solid var(--border-default);border-radius:8px;padding:10px 12px;font-size:var(--font-hint);min-width:0}
+.chat-product .chat-detail summary{cursor:pointer;overflow-wrap:anywhere}
+.chat-product .chat-detail pre,.chat-permission-detail{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;max-height:260px;overflow:auto}
+.chat-permission-actions{display:flex;gap:8px;flex-wrap:wrap}
+.chat-outcome{font-size:var(--font-hint);color:var(--text-secondary);min-height:1.4em;text-align:center;margin-top:4px}
+.chat-product .message.error{color:var(--status-danger-text)}
+.chat-product .compose-area{padding-top:4px}
+.chat-product .file-approval{margin:0 0 8px}
+.chat-product .empty h2{font-size:24px}
+@media(max-width:859px){.chat-product .chat-navigation{width:100%;border-right:0}.chat-product .run-state{white-space:normal;text-align:right}.chat-product .chat-heading h1{font-size:var(--font-body)}}

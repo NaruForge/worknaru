@@ -19,7 +19,8 @@ export function privateRuntimeEnvironment(init: Pick<RuntimeInit, 'paseoHome' | 
     const actual = Object.keys(process.env).find(key => key.toLowerCase() === name.toLowerCase());
     if (actual) env[name] = process.env[actual];
   }
-  return { ...env, PASEO_HOME: init.paseoHome, CODEX_HOME: init.codexHome, PASEO_NODE_ENV: 'production' };
+  const temporary = join(init.paseoHome, '..', 'tmp');
+  return { ...env, TEMP: temporary, TMP: temporary, PASEO_HOME: init.paseoHome, CODEX_HOME: init.codexHome, PASEO_NODE_ENV: 'production' };
 }
 
 function rejectLinkedTree(directory: string) {
@@ -57,6 +58,7 @@ function prepareRuntime(options: RuntimeOptions) {
   try {
     const paseoHome = prepareDataDirectory(options.projectRoot, join(directory, 'paseo'));
     const codexHome = prepareDataDirectory(options.projectRoot, join(directory, 'codex'));
+    prepareDataDirectory(options.projectRoot, join(directory, 'tmp'));
     assertUnlinkedFile(options.codexPath, 'Specify an existing Codex executable.');
     const authFile = options.authFile ?? join(homedir(), '.codex', 'auth.json');
     if (existsSync(authFile)) {

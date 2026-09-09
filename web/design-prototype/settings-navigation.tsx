@@ -1,5 +1,5 @@
-import { Button } from './ui.js';
-import type { SettingsSection } from './navigation.js';
+import { Button } from '../ui.js';
+export type SettingsSection = 'appearance' | 'connection' | 'ai';
 
 export const settingsSections: Record<SettingsSection, string> = { appearance: '화면', connection: '연결', ai: 'AI' };
 export function SettingsNavigation({ selected, select }: { selected: SettingsSection; select: (section: SettingsSection) => void }) {

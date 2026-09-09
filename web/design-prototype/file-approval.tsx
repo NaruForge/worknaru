@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react';
-import { Icon } from './icons.js';
-import type { FileApproval } from '../src/file-approval.js';
+import { Icon } from '../icons.js';
+// Historical design sample only. The current product uses runtime tool permissions.
+type FileApproval = { toolId: string; path: string; before: string; after: string; errorCode: string | null;
+  state: 'pending' | 'approved' | 'rejected' | 'applying' | 'completed' | 'failed' | 'cancelled' | 'unknown' };
 
 export const fileStateLabel = (tool: FileApproval) => ({ pending: '승인 대기', approved: '승인 접수', rejected: '거절됨 · 수정하지 않음', applying: '파일 적용 중', completed: '파일 수정 완료', failed: '적용하지 못함', cancelled: '취소됨 · 수정하지 않음', unknown: '파일 적용 결과 확인 필요' })[tool.state];
 

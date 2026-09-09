@@ -3,6 +3,8 @@
 관련 작업과 사용자 선택: [#25](https://github.com/NaruForge/worknaru/issues/25).
 제품 책임은 [README](../../README.md), 기존 탐색·입력 기준은 [공통 UI 기준](workspace-chat-ui.md)을 따른다.
 
+Paseo 전환의 첫 제품 범위는 [#35](https://github.com/NaruForge/worknaru/issues/35)를 따른다. 새 Chat은 승인된 배색·공통 control·작은 모델 선택기·입력창 위의 접힌 권한 패널을 사용한다. 아래 전체 Settings·파일 diff·서비스 탐색 시안은 기존 선택의 기록이며 `web/design-prototype/`의 예제로 보존한다. 현재 제품에 해당 기능 전체가 구현됐다는 뜻은 아니다.
+
 ## 컨셉과 선택 절차
 
 WorkNaru의 UI는 조용하고 구조적이며 업무 중심이어야 한다. 사용자의 작업·결과·AI 실행 상태를 명확히 보여주고, 같은 의미의 조작은 같은 표현과 동작을 사용한다.
@@ -44,7 +46,7 @@ Light/Dark는 기존처럼 OS의 초기 선호를 읽고 화면에서 전환한�
 
 OKLCH 변환은 [CSS Color 4의 색공간 정의](https://www.w3.org/TR/css-color-4/#color-conversion-code)를 참고한다. sRGB 범위 밖의 색은 chroma를 줄여 매핑하며, 주요 텍스트와 control 경계의 대비를 생성된 HEX 값으로 검증한다. CSS의 전체 gamut-mapping 알고리즘 구현을 표방하지 않는다.
 
-현재 제품의 baseline은 main `268cc629a6abd61aa3dd6dfa83976d7db8dacd2a`에서 가짜 ACP를 사용해 캡처한다. 컨셉 선택은 미관과 사용성의 판단이며 자동 대비 시험으로 대신하지 않는다. 키보드·스크린리더·제품 기능 전체의 검증과 최종 사용자 확인은 실제 적용 단계에서 수행한다.
+초기 제품의 baseline은 main `268cc629a6abd61aa3dd6dfa83976d7db8dacd2a`에서 가짜 ACP를 사용해 캡처한 기록이다. 현재 Chat은 새 runtime fake와 제품 브라우저 시험으로 검증하고, 공통 control의 시각 기준은 별도 prototype 시험으로 유지한다. 컨셉 선택은 미관과 사용성의 판단이며 자동 대비 시험으로 대신하지 않는다.
 
 실행과 검증 명령은 [로컬 개발 안내](../development.md#디자인-컨셉-프로토타입)를 따른다.
 

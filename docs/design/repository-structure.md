@@ -6,7 +6,7 @@
 - 저장소·패키지 선택의 근거: [ADR-0013](../adr/0013-start-with-one-package-and-explicit-code-boundaries.md)
 - 참고 자료: [저장소 구조 조사](../research/2026-09-08-repository-architecture.md)
 
-Paseo로 Agent 관리를 위임하는 결정과 앞으로의 책임은 [ADR-0016](../adr/0016-use-paseo-for-agent-management.md)을 따른다. 이 문서의 초기 설계와 6절 코드 표는 ACP 기반 출발점·현재 구현의 설명이며, Migration 구현 시 실제 배치에 맞춰 갱신한다.
+Paseo로 Agent 관리를 위임하는 결정은 [ADR-0016](../adr/0016-use-paseo-for-agent-management.md)을 따른다. 1~5절은 초기 설계의 기록이며, 현재 Paseo 기반 구현의 책임 배치는 6절에 설명한다.
 
 ## 1. 지금 정할 범위
 
@@ -62,15 +62,15 @@ Module은 플랫폼이 제공하는 기능을 사용하고, 플랫폼의 내부 
 
 ## 6. 현재 구현의 책임 배치
 
-2026-09-09 [#23](https://github.com/NaruForge/worknaru/issues/23)에서 기존 단일 패키지를 유지하며 Daemon 전용 빌드·검증과 공통 호출 도구를 추가했다. 위의 첫 저장 흐름은 출발 당시 범위이며, 현재 구현·명령·제약의 상세 원본은 [개발 안내](../development.md)다.
+[#35](https://github.com/NaruForge/worknaru/issues/35)에서 단일 패키지와 Daemon-first 원칙을 유지하고 Agent 관리를 Paseo에 위임했다. 위의 첫 저장 흐름은 출발 당시 범위이며, 현재 구현·명령·제약은 [개발 안내](../development.md)를 따른다.
 
 | 코드 | 현재 책임 |
 | --- | --- |
-| `src/main.ts`, `daemon.ts`, `store.ts`, ACP·프로세스·파일 도구 코드 | Daemon 조립, 공개 요청 접수, 저장·실행·승인과 최종 판정. 화면 코드를 실행하지 않는다. |
-| `src/public-contract.ts`, `ai-settings.ts`, `file-approval.ts` | 서버와 클라이언트가 공유하는 공개 응답 스키마·타입. Node·DOM·React 런타임에 의존하지 않는다. |
-| `src/protocol.ts` | 서버 입력 검증과 오류 계약. Node 의존 검증을 포함하므로 브라우저 공통 모듈로 사용하지 않는다. |
-| `src/web-client.ts`, `chat-state.ts`, `chat-client.ts`, `rpc-client.ts` | 공개 통신을 통한 요청·조회와 클라이언트 상태. 저장 구현을 직접 호출하지 않는다. |
-| `web/` | 입력·표시·검토·탐색과 미전송 초안. 공유 상태의 원본이나 파일 적용 권한을 소유하지 않는다. |
-| `scripts/dev.mjs`와 Hub 연결 코드 | 개발 프로세스 기동·접속·종료·공유. 업무 기능을 Vite 전용 경로에 구현하지 않는다. |
+| `src/main.ts`, `application.ts`, `scripts/dev.mjs` | 독립·개발 실행과 공통 조립, 제품 전체의 시작·종료. 조립 지점이 실제 runtime 구현을 선택한다. |
+| `src/paseo-*.ts`, `owned-process.ts`, `windows-runtime.ps1` | Paseo 타입·기능의 변환, 전용 구성·인증·연결과 프로세스 소유. Agent별 실행·세션·도구는 Paseo가 관리한다. |
+| `src/chat-contract.ts`, `chat-runtime.ts` | 제품 공개 계약과 현재 Chat이 소비하는 작은 runtime 인터페이스. Paseo 타입을 노출하지 않는다. |
+| `src/chat-daemon.ts`, `chat-service.ts`, `chat-store.ts` | 요청 검증, 동시 입력·설정·승인 판정, 대화 연결과 미확정 요청 정보. 전체 timeline과 Agent 상태 기계를 저장하지 않는다. |
+| `src/chat-connection.ts`, `chat-model.ts`, `rpc.ts` | UI/headless 공통 통신, 화면 상태·초안·요청 식별자와 호출 도구. DB와 Provider를 직접 다루지 않는다. |
+| `web/` | 새 Chat 표시·입력과 공통 primitive·디자인 토큰. `design-prototype/`은 기존 디자인 선택과 control 검증을 위한 예제다. |
 
-`build:daemon`과 `test:daemon`은 Web 빌드·Vite·브라우저 없이 실행한다. 전체 빌드·개발 실행기·브라우저 검증은 별도로 유지한다. 같은 패키지의 설치 의존성 분리나 자동 구조 강제를 보장하는 것은 아니다. Module 업무 규칙과 영속 업무 처리의 책임은 기존 Module 경계를 따르며, 향후 Module용 계층이나 빈 폴더를 추가하지 않았다.
+`build:daemon`과 `test:daemon`은 Web 빌드·Vite·브라우저 없이 실행한다. `npm test`는 제품 기동·개발 실행까지, `test:web`은 브라우저까지 검사한다. 플랫폼의 제품 정책·UI·Module은 runtime 인터페이스를 통해 기능을 사용하고 vendor 의존은 연결부와 조립 지점에 둔다. 현재 실제 구현은 Paseo이며 시험용 fake가 같은 인터페이스를 사용한다. 별도 NativeRuntime이나 미래 Module용 계층은 만들지 않았다.
