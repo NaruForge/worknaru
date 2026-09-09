@@ -2,6 +2,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer as createHttpServer } from 'node:http';
+import { connect as connectTcp } from 'node:net';
 import { existsSync, realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
@@ -9,14 +10,21 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 const root = realpathSync(fileURLToPath(new URL('../', import.meta.url)));
-const route = '/__worknaru_dev';
 
 // Both servers belong to this invocation. No PID files or process-name searches.
-export async function startDevServers({ daemonOptions, webPort = 15173, onStopped = () => {} }) {
+export async function startDevServers({ daemonOptions, webPort = 15173, hub, onStopped = () => {} }) {
   const [{ startDaemon }, { createServer }] = await Promise.all([import('../dist/daemon.js'), import('vite')]);
   const origin = `http://127.0.0.1:${webPort}`;
+  if (hub && (!/^[a-f0-9]{16}$/.test(hub.Id) || hub.BasePath !== `/p/${hub.Id}/` || hub.TailnetOrigin !== 'https://bsw-home.tailec99c3.ts.net:9191')) throw new Error('올바른 Hub 경로가 필요합니다.');
+  const base = hub?.BasePath ?? '/';
+  const route = `${base}__worknaru_dev`;
+  const relayPath = `${base}__worknaru_ws`;
+  const allowedOrigins = new Set([origin, ...(hub ? [hub.TailnetOrigin, 'http://127.0.0.1:9191'] : [])]);
   const daemon = await startDaemon({ ...daemonOptions, projectRoot: root, origins: [origin] });
   const httpServer = createHttpServer();
+  httpServer.headersTimeout = 5_000;
+  httpServer.requestTimeout = 10_000;
+  httpServer.maxConnections = 64;
   const sockets = new Set();
   httpServer.on('connection', (socket) => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
   let web;
@@ -36,7 +44,7 @@ export async function startDevServers({ daemonOptions, webPort = 15173, onStoppe
       const httpClosed = new Promise((resolveClose) => httpServer.close(resolveClose));
       for (const socket of sockets) socket.destroy();
       await httpClosed;
-      onStopped(confirmed);
+      await onStopped(confirmed);
     }
     return confirmed;
   })();
@@ -48,6 +56,7 @@ export async function startDevServers({ daemonOptions, webPort = 15173, onStoppe
   try {
     web = await createServer({
       configFile: join(root, 'vite.config.ts'),
+      base,
       // The launcher owns signals and HTTP lifetime; Vite must not exit the process.
       // Disable speculative transforms so immediate shutdown before opening a tab
       // does not wait on dependency requests that no browser will finish.
@@ -56,7 +65,8 @@ export async function startDevServers({ daemonOptions, webPort = 15173, onStoppe
       plugins: [{
         name: 'worknaru-dev-lifecycle',
         transformIndexHtml: () => [
-          { tag: 'meta', attrs: { name: 'worknaru-dev-endpoint', content: daemon.url }, injectTo: 'head' },
+          { tag: 'meta', attrs: { name: 'worknaru-dev-endpoint', content: hub ? relayPath : daemon.url }, injectTo: 'head' },
+          { tag: 'meta', attrs: { name: 'worknaru-dev-base', content: base }, injectTo: 'head' },
           { tag: 'meta', attrs: { name: 'worknaru-dev-instance', content: daemon.daemonInstanceId }, injectTo: 'head' },
         ],
         configureServer(server) {
@@ -64,7 +74,7 @@ export async function startDevServers({ daemonOptions, webPort = 15173, onStoppe
             if (!req.url?.startsWith(route)) { next(); return; }
             const supplied = Buffer.from(req.headers.authorization ?? '');
             if (req.headers.host !== `127.0.0.1:${webPort}` ||
-                (req.headers.origin !== undefined && req.headers.origin !== origin) ||
+                (req.headers.origin !== undefined && !allowedOrigins.has(req.headers.origin)) ||
                 req.headers['x-worknaru-dev-instance'] !== daemon.daemonInstanceId ||
                 supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
               reply(res, 403, { error: '이번 개발 실행의 연결 키가 필요합니다.' }); return;
@@ -98,13 +108,42 @@ export async function startDevServers({ daemonOptions, webPort = 15173, onStoppe
         },
       }],
     });
+    if (hub) httpServer.on('upgrade', (request, socket, head) => {
+      if (request.url !== relayPath) {
+        // Vite owns only its base-path HMR socket; do not retain unknown upgrades.
+        const pathname = request.url?.split('?')[0];
+        if (pathname === base && ['vite-hmr', 'vite-ping'].includes(request.headers['sec-websocket-protocol'])) return;
+        socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'); return;
+      }
+      if (daemonClosing || request.headers.host !== `127.0.0.1:${webPort}` ||
+          !allowedOrigins.has(request.headers.origin) || request.headers.upgrade?.toLowerCase() !== 'websocket') {
+        socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'); return;
+      }
+      // Only this Daemon is reachable. Its original hello/token authentication
+      // and protocol limits remain in force; no arbitrary forwarding target.
+      const upstream = connectTcp({ host: '127.0.0.1', port: Number(new URL(daemon.url).port) });
+      sockets.add(upstream);
+      upstream.once('close', () => { sockets.delete(upstream); socket.destroy(); });
+      socket.once('close', () => upstream.destroy());
+      socket.on('error', () => upstream.destroy());
+      upstream.on('error', () => socket.destroy());
+      upstream.once('connect', () => {
+        const headers = [`GET /ws HTTP/1.1`, `Host: ${new URL(daemon.url).host}`, 'Connection: Upgrade', 'Upgrade: websocket', `Origin: ${origin}`];
+        for (const name of ['sec-websocket-key', 'sec-websocket-version', 'sec-websocket-protocol']) {
+          if (typeof request.headers[name] === 'string') headers.push(`${name}: ${request.headers[name]}`);
+        }
+        upstream.write(`${headers.join('\r\n')}\r\n\r\n`);
+        if (head.length) upstream.write(head);
+        socket.pipe(upstream).pipe(socket);
+      });
+    });
     httpServer.on('request', web.middlewares);
     httpServer.listen(webPort, '127.0.0.1');
     await once(httpServer, 'listening');
-    const response = await fetch(origin, { signal: AbortSignal.timeout(10_000) });
+    const response = await fetch(`${origin}${base}`, { signal: AbortSignal.timeout(10_000) });
     if (!response.ok) throw new Error('UI 준비 확인에 실패했습니다.');
     await response.arrayBuffer();
-    return { origin, daemon, close };
+    return { origin, localUrl: `${origin}${base}`, daemon, close };
   } catch (error) { await close(); throw error; }
 }
 
@@ -124,10 +163,10 @@ async function main() {
   const { values } = parseArgs({ options: {
     'web-port': { type: 'string', default: '15173' }, 'daemon-port': { type: 'string', default: '4310' },
     'data-dir': { type: 'string', default: '.worknaru-dev' }, workspace: { type: 'string', default: '.' },
-    'codex-path': { type: 'string' }, 'no-open': { type: 'boolean' }, 'no-clipboard': { type: 'boolean' }, help: { type: 'boolean' },
+    'codex-path': { type: 'string' }, hub: { type: 'boolean' }, 'no-open': { type: 'boolean' }, 'no-clipboard': { type: 'boolean' }, help: { type: 'boolean' },
   } });
   if (values.help) {
-    console.log('npm run dev -- [--web-port 15173] [--daemon-port 4310] [--workspace .] [--data-dir .worknaru-dev] [--codex-path <codex.exe>] [--no-open] [--no-clipboard]\n종료: UI의 개발 서버 종료 버튼 또는 Ctrl+C'); return;
+    console.log('npm run dev -- [--hub] [--web-port 15173] [--daemon-port 4310] [--workspace .] [--data-dir .worknaru-dev] [--codex-path <codex.exe>] [--no-open] [--no-clipboard]\n--hub: 기존 Tailnet Preview Hub에 20분 연결\n종료: UI의 개발 서버 종료 버튼 또는 Ctrl+C'); return;
   }
   const [major, minor] = process.versions.node.split('.').map(Number);
   if (process.platform !== 'win32' || major !== 24 || minor < 18) throw new Error('Windows와 Node.js 24.18 이상 24.x가 필요합니다.');
@@ -145,9 +184,12 @@ async function main() {
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
   const run = (executable, args, options) => command(executable, args, { ...options, signal: abort.signal });
+  const hubCommand = async (mode, id) => JSON.parse(await command('pwsh.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-File', join(root, 'scripts/dev-hub.ps1'), '-Mode', mode, '-Port', String(ports[0]), '-DaemonPort', String(ports[1]), ...(id ? ['-Id', id] : [])], { capture: true }));
   await run('pwsh.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.Major'], { capture: true });
   const codexPath = resolve(root, values['codex-path'] ?? process.env.WORKNARU_CODEX_PATH ?? await run('pwsh.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', "(Get-Command codex.exe -CommandType Application -ErrorAction Stop).Source"], { capture: true }));
   if (!existsSync(codexPath)) throw new Error('Codex 실행 파일을 찾지 못했습니다. --codex-path로 지정하세요.');
+  const hub = values.hub ? await hubCommand('Prepare') : undefined;
+  if (hub) console.log(`Hub 연결 준비: 9191 Tailnet 전용 · 백엔드 ${hub.HubRunning ? '실행 중' : '연결 시 시작'} · UI 127.0.0.1:${ports[0]}`);
   process.chdir(root);
   console.log('최신 코드를 빌드합니다…');
   const compiler = join(dirname(require.resolve('typescript/package.json')), 'bin/tsc');
@@ -157,24 +199,38 @@ async function main() {
   await build({ configFile: join(root, 'vite.config.ts') });
   abort.signal.throwIfAborted();
   let stopped = false;
-  servers = await startDevServers({ webPort: ports[0], daemonOptions: {
+  let attachment;
+  let attaching;
+  servers = await startDevServers({ webPort: ports[0], hub, daemonOptions: {
     token, port: ports[1], dataDirectory: values['data-dir'], workspaceDirectory: resolve(values.workspace), acp: { codexPath },
-  }, onStopped(confirmed) {
+  }, async onStopped(confirmed) {
     stopped = true;
     process.removeListener('SIGINT', stop);
     process.removeListener('SIGTERM', stop);
     if (!confirmed) process.exitCode = 1;
+    if (attaching) await attaching.catch(() => {});
+    if (attachment) await hubCommand('Detach', hub.Id).catch(() => {
+      process.exitCode = 1;
+      console.error(`Hub 공유 해제를 확인하지 못했습니다. Dashboard에서 Preview ${hub.Id}를 해제하세요.`);
+    });
     console.log(confirmed ? '개발 서버가 종료되었습니다. 대화와 설정은 보존했습니다.' : '서버를 닫았으나 AI 프로세스 정리를 확인하지 못했습니다.');
   } });
   try {
     if (abort.signal.aborted) { await servers.close(); return; }
+    if (hub) {
+      attaching = hubCommand('Attach', hub.Id).then((result) => { attachment = result; return result; });
+      await attaching;
+      if (stopped) return;
+      console.log(`Hub: ${attachment.TailnetUrl}\n종류: attached-dev-server · 만료: ${attachment.ExpiresAt}\n공유만 해제해도 개발 서버는 계속 실행됩니다.`);
+      console.log(`20분 연장: & 'C:\\Projects\\TailscaleOps\\scripts\\artifact-preview\\Extend-ArtifactPreview.ps1' -Id ${hub.Id} -Minutes 20\n공유 해제: & 'C:\\Projects\\TailscaleOps\\scripts\\artifact-preview\\Detach-ArtifactDevServer.ps1' -Id ${hub.Id}`);
+    }
     if (!values['no-clipboard']) {
       await run('pwsh.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '$ErrorActionPreference = "Stop"; [Console]::In.ReadToEnd() | Set-Clipboard'], { input: token });
       console.log('연결 키를 클립보드에 복사했습니다. 연결 창에 붙여넣으세요.');
     }
     if (stopped) return;
-    console.log(`UI: ${servers.origin}\nDaemon: ${servers.daemon.url}\n종료: 화면의 개발 서버 종료 버튼`);
-    if (!values['no-open']) await run('pwsh.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', `$ErrorActionPreference = "Stop"; Start-Process '${servers.origin}'`]).catch(() => { if (!stopped) console.log(`브라우저에서 ${servers.origin}을 여세요.`); });
+    console.log(`UI: ${servers.localUrl}\nDaemon: ${servers.daemon.url}\n종료: 화면의 개발 서버 종료 버튼`);
+    if (!values['no-open']) await run('pwsh.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', `$ErrorActionPreference = "Stop"; Start-Process '${servers.localUrl}'`]).catch(() => { if (!stopped) console.log(`브라우저에서 ${servers.localUrl}을 여세요.`); });
   } catch (error) { await servers.close(); throw error; }
 }
 

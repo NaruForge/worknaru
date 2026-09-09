@@ -20,6 +20,7 @@ Daemon은 Session과 텍스트 메시지를 SQLite에 저장하고, 재시작 �
 
 ```powershell
 npm run dev
+npm run dev -- --hub
 npm run dev -- --web-port 15174 --daemon-port 14310
 npm run dev -- --workspace . --data-dir .worknaru-dev --codex-path (Get-Command codex.exe).Source
 npm run dev -- --help
@@ -27,6 +28,7 @@ npm run dev -- --help
 
 | 옵션 | 기본값과 동작 |
 | --- | --- |
+| `--hub` | 기존 Artifact Preview Hub에 20분 동안 연결한다. 기본 로컬 실행에서는 연결하지 않는다. |
 | `--web-port` | `15173`. UI의 IPv4 loopback 포트. |
 | `--daemon-port` | `4310`. Daemon의 IPv4 loopback 포트. UI와 다른 포트여야 한다. |
 | `--workspace` | 저장소 루트. 기존 Workspace 폴더를 지정한다. |
@@ -46,6 +48,34 @@ npm run dev -- --help
 개발 종료 제어는 Vite 개발 서버에만 설치한 `/__worknaru_dev/status`(GET), `/__worknaru_dev/stop`(POST)이다. 두 요청 모두 Daemon 연결 키의 Bearer 인증과 이번 실행의 `X-WorkNaru-Dev-Instance`를 요구하며 정확한 Host와, Origin이 있으면 UI Origin을 확인한다. 진행 중인 실행이 있으면 stop은 `409 { activeRuns }`로 확인을 요구하고, 명시적으로 중단을 확인한 요청은 `X-WorkNaru-Confirm-Stop: yes`를 보낸다. 정상 종료는 `200 { stopped: true }`, 정리 미확인은 500으로 반환한다. 새 실행은 다른 instance ID를 사용하므로 이전 탭의 종료 요청을 거절한다. 일반 Daemon의 WebSocket 계약에 종료 명령을 추가하지 않으며 `dev:web`·`preview:web`에는 이 제어 경로와 버튼이 없다.
 
 `npm test`는 개발 서버의 인증·실행 식별자, 포트 충돌 시 정리, 종료 전 실행 재확인, ACP 프로세스 트리 정리, 같은 포트·데이터로 재실행을 검증한다. `npm run test:web`는 화면 종료, 다른 탭 응답의 중단 확인과 취소, 연결 전 종료, 작은 화면, 탭 닫기 후 서버 유지, 종료 후 기록 조회도 검증한다. 가짜 ACP 에이전트를 사용하며 실제 모델 질문을 보내지 않는다.
+
+### Hub로 같은 개발 서버 공유
+
+`npm run dev -- --hub`는 기존 `C:\Projects\TailscaleOps`의 Artifact Preview Hub를 이용한다. `scripts/dev-hub.ps1`은 그 저장소의 예약 포트와 Tailscale 상태, 고정 9191 Serve 설정을 확인하고 기존 New/Attach/Detach 명령을 호출한다. Serve·Funnel·방화벽 설정을 변경하지 않는다. Hub 백엔드가 꺼져 있으면 기존 Attach 명령이 시작하며, 공유 해제나 WorkNaru 종료 시에도 공유 Hub 자체는 계속 실행한다.
+
+UI는 `http://127.0.0.1:15173/p/<id>/`, 외부 접속은 `https://bsw-home.tailec99c3.ts.net:9191/p/<id>/`를 사용한다. 같은 Tailscale 네트워크에서 허용된 기기만 접속할 수 있다. 파일·데이터 복사나 별도 앱 서버는 만들지 않고, Hub의 기존 상태 영역에 연결 정보만 등록한다. 연결 키는 기존처럼 사용자가 입력하며 다른 기기로 자동 전송하지 않는다.
+
+Vite의 base와 HMR 경로를 Preview 경로로 맞춘다. 화면의 연결 주소는 페이지와 같은 출처의 `/p/<id>/__worknaru_ws`로 자동 설정되며 HTTPS 화면에서는 WSS를 사용한다. 개발 서버의 고정 중계 경로가 정확한 Host와 허용 Origin을 확인한 뒤 자신이 실행한 loopback Daemon의 `/ws`에만 연결한다. Daemon의 hello 인증·전송 계약·접근 범위는 유지하며 임의 주소를 중계하지 않는다. 플랫폼 WebClient는 기본 loopback 주소 외에 화면이 지정한 정확한 개발 중계 주소 하나만 허용한다. 종료 요청도 Preview 경로 아래의 `__worknaru_dev`를 사용하고 기존 키·instance ID 검증을 유지한다.
+
+공유는 기본 20분이다. 만료·Dashboard 해제는 연결 경로만 제거하고 개발 프로세스를 종료하지 않는다. 개발 서버 종료 시에는 이번 ID만 해제하며, 이미 만료 후 정리되거나 해제된 연결은 다시 삭제하지 않는다. 해제 실패는 터미널에서 ID와 함께 알린다. 외부 연결·공유 경로가 없어져도 서버가 실행 중이면 로컬 Preview 경로에서 이어 점검할 수 있다.
+
+실행할 때마다 Preview ID와 주소가 달라진다. 저장된 대화와 설정은 그대로지만, 미확정 요청의 브라우저 접수 장부는 기존과 같이 같은 Origin·탭·Daemon 주소 범위에 한정된다. 새 공유 주소로 이동해 이전 주소의 미확정 요청을 자동 복구하거나 다시 전송하지 않는다. 연결 해제 후 재개 시에는 저장된 대화와 접수 상태를 확인한다.
+
+터미널에는 정확한 ID·만료 시각·공유 주소와 아래 형태의 명령을 출력한다. `<id>`는 해당 실행의 실제 값으로 바꾼다.
+
+```powershell
+& 'C:\Projects\TailscaleOps\scripts\artifact-preview\Extend-ArtifactPreview.ps1' -Id <id> -Minutes 20
+& 'C:\Projects\TailscaleOps\scripts\artifact-preview\Detach-ArtifactDevServer.ps1' -Id <id>
+```
+
+일반 서버·브라우저 검사는 로컬에서 Hub 경로와 채팅·HMR·종료를 확인하며 실제 공유를 만들지 않는다. 실제 Hub 통합 검증은 아래 명령으로 별도 실행한다. 가짜 ACP 에이전트의 임시 서버를 연결해 Local/Tailnet HTTP, WSS 채팅, HMR을 검증하고 해당 공유와 임시 서버를 정리한다. 공유 Hub는 실행 상태로 남으며 실제 모델 질문은 보내지 않는다.
+
+```powershell
+npm run build
+$env:WORKNARU_TEST_HUB = '1'
+node --test tests/dev-hub-live.mjs
+Remove-Item Env:WORKNARU_TEST_HUB
+```
 
 ### 개별 Daemon 실행
 

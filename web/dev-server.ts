@@ -2,15 +2,26 @@ import { useState } from 'react';
 
 type Stage = 'idle' | 'key' | 'checking' | 'confirm' | 'stopping' | 'stopped' | 'error';
 
+export function developmentEndpoint() {
+  const value = document.querySelector<HTMLMetaElement>('meta[name="worknaru-dev-endpoint"]')?.content;
+  if (value && /^\/p\/[a-f0-9]{16}\/__worknaru_ws$/.test(value)) {
+    const url = new URL(value, location.origin);
+    url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return url.href;
+  }
+  return value;
+}
+
 export function useDevServer(getToken: (endpoint: string) => string) {
-  const [endpoint] = useState(() => document.querySelector<HTMLMetaElement>('meta[name="worknaru-dev-endpoint"]')?.content);
+  const [endpoint] = useState(developmentEndpoint);
+  const [base] = useState(() => document.querySelector<HTMLMetaElement>('meta[name="worknaru-dev-base"]')?.content ?? '/');
   const [instance] = useState(() => document.querySelector<HTMLMetaElement>('meta[name="worknaru-dev-instance"]')?.content);
   const [stage, setStage] = useState<Stage>('idle');
   const [key, setKey] = useState('');
   const [activeRuns, setActiveRuns] = useState(0);
   const [error, setError] = useState('');
   const request = async (path: string, token: string, confirm = false) => {
-    const response = await fetch(`/__worknaru_dev/${path}`, {
+    const response = await fetch(`${base}__worknaru_dev/${path}`, {
       method: path === 'stop' ? 'POST' : 'GET', cache: 'no-store',
       headers: { Authorization: `Bearer ${token}`, 'X-WorkNaru-Dev-Instance': instance ?? '', ...(confirm ? { 'X-WorkNaru-Confirm-Stop': 'yes' } : {}) },
       signal: AbortSignal.timeout(180_000),

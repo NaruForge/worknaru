@@ -5,6 +5,7 @@ import { request as httpRequest } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { WebClient } from '../dist/web-client.js';
 import { startDevServers } from '../scripts/dev.mjs';
 import { startDaemon } from '../dist/daemon.js';
 import { fixture, connect, createSession, mutation, projectRoot, deadline } from './helpers.mjs';
@@ -20,7 +21,7 @@ async function freePort() {
 async function start(f, options = {}) {
   const webPort = options.webPort ?? await freePort();
   const stopped = Promise.withResolvers();
-  const server = await startDevServers({ webPort, daemonOptions: {
+  const server = await startDevServers({ webPort, hub: options.hub, daemonOptions: {
     dataDirectory: f.data, workspaceDirectory: f.workspace, token: f.token, port: 0, ...options.daemonOptions,
   }, onStopped: stopped.resolve });
   f.cleanups.push(() => server.close());
@@ -66,6 +67,34 @@ test('dev lifecycle authenticates its instance, preserves data and stops both li
   const nextClient = await connect(f, server.daemon);
   const messages = await nextClient.call('messages.list', { sessionId: session.sessionId });
   assert.equal(messages.result.messages[0].text, '개발 종료 후 유지');
+});
+
+test('Hub subpath relays only its daemon and retains origin and hello authentication', async (t) => {
+  const f = fixture(t);
+  const hub = { Id: '0123456789abcdef', BasePath: '/p/0123456789abcdef/', TailnetOrigin: 'https://bsw-home.tailec99c3.ts.net:9191' };
+  const server = await start(f, { hub });
+  const html = await (await fetch(server.localUrl)).text();
+  assert.ok(html.includes(`${hub.BasePath}@vite/client`));
+  assert.ok(html.includes(`${hub.BasePath}__worknaru_ws`));
+  const url = `${server.origin.replace('http:', 'ws:')}${hub.BasePath}__worknaru_ws`;
+  const remote = await connect(f, { url }, f.token, { origin: hub.TailnetOrigin });
+  assert.equal(remote.ready.daemonInstanceId, server.daemon.daemonInstanceId);
+  const session = await createSession(remote, server.daemon.workspace.workspaceId, 'Hub 대화');
+  await remote.call('messages.append', { sessionId: session.sessionId, text: '같은 Daemon' }, mutation(remote));
+  const local = await connect(f, server.daemon);
+  assert.equal((await local.call('messages.list', { sessionId: session.sessionId })).result.messages[0].text, '같은 Daemon');
+  const wrong = await connect(f, { url }, 'x'.repeat(43), { origin: hub.TailnetOrigin });
+  assert.equal(wrong.ready.error.code, 'AUTH_FAILED');
+  await assert.rejects(connect(f, { url }, f.token, { origin: 'https://untrusted.example' }));
+  await assert.rejects(connect(f, { url: `${url}?unexpected=1` }, f.token, { origin: hub.TailnetOrigin }));
+  await assert.rejects(new WebClient().connect(url, f.token), /연결 주소/);
+  await assert.rejects(new WebClient(url).connect(url.replace(hub.Id, 'aaaaaaaaaaaaaaaa'), f.token), /연결 주소/);
+  const response = await fetch(`${server.origin}${hub.BasePath}__worknaru_dev/status`, { headers: { ...server.headers, Origin: hub.TailnetOrigin } });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { activeRuns: 0 });
+  const stopped = await fetch(`${server.origin}${hub.BasePath}__worknaru_dev/stop`, { method: 'POST', headers: { ...server.headers, Origin: hub.TailnetOrigin } });
+  assert.deepEqual(await stopped.json(), { stopped: true });
+  assert.equal(await deadline(server.stopped), true);
 });
 
 test('unconfirmed cleanup is an error response and never a successful shutdown', async (t) => {

@@ -19,12 +19,12 @@ const test = base.extend({
   },
 });
 
-async function developmentServer(records, acp = false) {
+async function developmentServer(records, acp = false, hub) {
   const socket = createServer();
   socket.listen(0, '127.0.0.1'); await once(socket, 'listening');
   const port = socket.address().port;
   await new Promise((resolve) => socket.close(resolve));
-  const server = await startDevServers({ webPort: port, daemonOptions: {
+  const server = await startDevServers({ webPort: port, hub, daemonOptions: {
     dataDirectory: records.data, workspaceDirectory: records.workspace, token: records.token, port: 0,
     ...(acp ? { acp: { command: { executable: process.execPath, arguments: [join(projectRoot, 'tests/fake-acp.mjs')], cwd: records.workspace,
       env: { ...process.env, TEST_AGENT_LOG: join(records.root, 'agent.log'), TEMP: records.root, TMP: records.root },
@@ -72,6 +72,27 @@ test('dev UI stops other-tab runs after confirmation and preserves history on re
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await page.locator('.conversation-list button').filter({ hasText: '대화 1' }).click();
   await expect(page.getByRole('article', { name: '내 메시지' })).toContainText('개발 종료 뒤에도 남을 기록');
+});
+
+test('Hub subpath UI uses same-origin chat, HMR and shutdown', async ({ page, records }) => {
+  const hub = { Id: '0123456789abcdef', BasePath: '/p/0123456789abcdef/', TailnetOrigin: 'https://bsw-home.tailec99c3.ts.net:9191' };
+  const server = await developmentServer(records, true, hub);
+  const sockets = [];
+  page.on('websocket', (socket) => sockets.push(socket.url()));
+  await page.goto(server.localUrl);
+  await expect(page.getByLabel('Daemon 주소')).toHaveValue(`${server.origin.replace('http:', 'ws:')}${hub.BasePath}__worknaru_ws`);
+  await page.getByLabel('연결 키', { exact: true }).fill(records.token);
+  await page.getByRole('button', { name: '연결', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await newSession(page);
+  await send(page, 'Hub 경로의 대화');
+  await expect(page.locator('.run-state')).toHaveText('응답 완료');
+  await expect(page.getByRole('article', { name: 'AI 메시지' })).toContainText('Hub 경로의 대화');
+  expect(sockets.some((url) => url.includes(`${hub.BasePath}?token=`))).toBe(true);
+  expect(sockets.some((url) => url.endsWith(`${hub.BasePath}__worknaru_ws`))).toBe(true);
+  await page.getByRole('button', { name: '개발 서버 종료', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '종료되었습니다.' })).toBeVisible({ timeout: 20_000 });
+  expect(await server.close()).toBe(true);
 });
 
 test('dev UI can stop before connecting; closing a tab does not stop the servers', async ({ page, records, context }) => {
