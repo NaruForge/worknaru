@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { ChatStateStore } from '../src/chat-state.js';
 import { Chat, ConversationList } from './chat.js';
+import type { TranscriptPosition } from './chat.js';
 import { Button, Field, Input, Dialog, MainPanel } from './ui.js';
 import { WorkspaceShell } from './shell.js';
 import type { ColorPreference } from './appearance.js';
@@ -22,6 +23,7 @@ export function App({ model, appearance }: { model: ChatStateStore; appearance: 
   const activeRoute = useRef(navigation.route);
   activeRoute.current = navigation.route;
   const chatListScroll = useRef(0);
+  const transcriptPosition = useRef<TranscriptPosition | undefined>(undefined);
   const [permissionId, setPermissionId] = useState<string>();
   const fileRequests = Object.values(state.runs).flatMap((run) => run.tools.map((tool) => ({ run, tool })));
   const displayedPermissions = fileRequests.filter(({ run, tool }) => (run.state === 'running' && tool.state === 'pending') || tool.toolId === permissionId);
@@ -113,7 +115,7 @@ export function App({ model, appearance }: { model: ChatStateStore; appearance: 
         {state.pending && <p role="status">{state.busy ? '접수 확인 중…' : '접수 여부 확인이 필요합니다.'}{!state.busy && <Button variant="outline" className="settings-action" onClick={() => void model.resolvePending()}>접수 확인</Button>}</p>}
         {state.error && <p className="error-text small" role="alert">{state.error}</p>}
       </div>
-    </MainPanel> : <Chat state={state} model={model} reconnect={reconnect} create={() => void createSession()} visible={wide || navigation.route.view === 'main'} approvals={displayedPermissions.map(permission => <FileApprovalPanel key={permission.tool.toolId} tool={permission.tool} open={permissionId === permission.tool.toolId} context={state.sessions.find(session => session.sessionId === permission.run.sessionId)?.title} onToggle={open => setPermissionId(current => open ? permission.tool.toolId : current === permission.tool.toolId ? undefined : current)}><div className="permission-content">
+    </MainPanel> : <Chat state={state} model={model} scrollPosition={transcriptPosition} reconnect={reconnect} create={() => void createSession()} visible={wide || navigation.route.view === 'main'} approvals={displayedPermissions.map(permission => <FileApprovalPanel key={permission.tool.toolId} tool={permission.tool} open={permissionId === permission.tool.toolId} context={state.sessions.find(session => session.sessionId === permission.run.sessionId)?.title} onToggle={open => setPermissionId(current => open ? permission.tool.toolId : current === permission.tool.toolId ? undefined : current)}><div className="permission-content">
         <p role="status" aria-label="파일 수정 상태">{fileStateLabel(permission.tool)}</p>
         {permission.tool.errorCode === 'FILE_CONFLICT' && <p>승인 대기 중 원본이 변경되어 덮어쓰지 않았습니다. 파일을 다시 읽고 수정안을 확인하세요.</p>}
         {permission.tool.state === 'unknown' && <p>파일의 실제 내용을 확인하세요. 이 요청은 자동 재실행하지 않습니다.</p>}

@@ -29,6 +29,13 @@ export function useWorkspaceNavigation(model: ChatStateStore) {
   const [route, setRoute] = useState<Route>(() => readEntry()?.route ?? initial);
   const current = useRef(route);
   const scope = useRef<string | undefined>(undefined);
+  // Connection publishes the new Workspace before all initialization requests
+  // finish. Compare history with that live identity, not only the last callback.
+  const canRestore = (entry: Entry) => {
+    const state = model.getSnapshot();
+    const liveScope = state.workspace && state.ready ? `${state.workspace.workspaceId}:${state.ready.storeEpoch}` : undefined;
+    return state.connection !== 'connecting' && entry.scope === scope.current && entry.scope === liveScope;
+  };
   current.current = route;
   const write = (next: Route, parent: Route | undefined, replace: boolean) => {
     const entry: Entry = { version: 1, scope: scope.current, route: next, parent };
@@ -53,7 +60,7 @@ export function useWorkspaceNavigation(model: ChatStateStore) {
   useEffect(() => {
     const pop = () => {
       const entry = readEntry();
-      if (entry && entry.scope === scope.current) restore(entry);
+      if (entry && canRestore(entry)) restore(entry);
       else write({ ...initial, sessionId: model.getSnapshot().selected }, undefined, true);
     };
     addEventListener('popstate', pop);

@@ -11,6 +11,8 @@ const active = (run?: Run) => run && ['running', 'cancelling'].includes(run.stat
 const runLabel = (run?: Run) => !run ? '새 대화' : run.tools.some((tool) => tool.state === 'pending') ? '파일 수정 승인 대기' : ({ running: '응답 중', cancelling: '중지 중', completed: '응답 완료', cancelled: '중지 완료', failed: '응답 실패' })[run.state];
 const currentRun = (state: ChatState, session?: Session) => session?.latestRunId ? state.runs[session.latestRunId] : undefined;
 
+export type TranscriptPosition = { key: string; top: number; stick: boolean };
+
 export function ConversationList({ state, model, select, create, scrollPosition, visible }: { state: ChatState; model: ChatStateStore; select: (id: string) => void; create: () => void; scrollPosition: RefObject<number>; visible: boolean }) {
   const list = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => { if (list.current && visible) list.current.scrollTop = scrollPosition.current; }, [scrollPosition, visible]);
@@ -45,7 +47,7 @@ function notice(state: ChatState, session?: Session, run?: Run): { title: string
   if (!state.ready?.aiExecution) return { neutral: true, title: '기록 조회 모드입니다', text: '대화 실행을 사용하려면 AI 연결 기능을 켠 Daemon에 연결해 주세요.' };
 }
 
-export function Chat({ state, model, reconnect, approvals, create, visible = true }: { state: ChatState; model: ChatStateStore; reconnect: () => void; approvals?: ReactNode; create: () => void; visible?: boolean }) {
+export function Chat({ state, model, reconnect, approvals, create, scrollPosition, visible = true }: { state: ChatState; model: ChatStateStore; reconnect: () => void; approvals?: ReactNode; create: () => void; scrollPosition: RefObject<TranscriptPosition | undefined>; visible?: boolean }) {
   const session = state.sessions.find((item) => item.sessionId === state.selected);
   const run = currentRun(state, session);
   const page = state.selected ? state.pages[state.selected] : undefined;
@@ -56,22 +58,43 @@ export function Chat({ state, model, reconnect, approvals, create, visible = tru
   const warning = notice(state, session, run);
   const scroll = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
-  const previousSession = useRef(state.selected);
+  const geometry = useRef({ width: 0, height: 0 });
+  const positionKey = `${state.workspace?.workspaceId}:${state.ready?.storeEpoch}:${state.selected}`;
   const composing = useRef(false);
   const [newOutput, setNewOutput] = useState(false);
   const messages = page?.messages ?? [];
   const output = run?.text ?? '';
-  useLayoutEffect(() => {
+  const restorePosition = () => {
     const element = scroll.current;
-    if (!element || !visible) return;
-    if (previousSession.current !== state.selected) { stick.current = true; previousSession.current = state.selected; }
+    if (!element || !visible || !element.getClientRects().length) return;
+    const saved = scrollPosition.current;
+    stick.current = saved?.key === positionKey ? saved.stick : true;
     if (stick.current) { element.scrollTop = element.scrollHeight; setNewOutput(false); }
-    else setNewOutput(true);
-  }, [state.selected, messages.length, output, visible]);
+    else { element.scrollTop = saved!.top; setNewOutput(true); }
+    geometry.current = { width: element.clientWidth, height: element.clientHeight };
+    scrollPosition.current = { key: positionKey, top: element.scrollTop, stick: stick.current };
+  };
+  useLayoutEffect(() => {
+    restorePosition();
+  }, [positionKey, messages.length, output, visible, scrollPosition]);
+  useLayoutEffect(() => {
+    const observer = new ResizeObserver(restorePosition);
+    if (scroll.current) observer.observe(scroll.current);
+    return () => observer.disconnect();
+  }, [positionKey, visible, scrollPosition]);
   const unlistedRun = run && !messages.some((message) => message.role === 'assistant' && message.runId === run.runId);
   return <section className="chat" aria-label="Chat">
     <header className="chat-heading"><div><span className="eyebrow">Chat</span><h1>{session?.title ?? '새로운 생각을 나누세요'}</h1></div><span className="spacer" /><span className="run-state" role="status">{state.loading ? '기록 불러오는 중' : runLabel(run)}</span></header>
-    <div className="transcript-scroll" ref={scroll} onScroll={() => { const element = scroll.current!; stick.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80; if (stick.current) setNewOutput(false); }}>
+    <div className="transcript-scroll" ref={scroll} onScroll={() => {
+      const element = scroll.current!;
+      if (!visible || !element.getClientRects().length) return;
+      // Reflow can dispatch scroll before ResizeObserver. It is not a user's
+      // choice to stop following output or to change the saved reading position.
+      if (geometry.current.width !== element.clientWidth || geometry.current.height !== element.clientHeight) { restorePosition(); return; }
+      stick.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
+      scrollPosition.current = { key: positionKey, top: element.scrollTop, stick: stick.current };
+      if (stick.current) setNewOutput(false);
+    }}>
       <div className="reading">
         {!messages.length && !unlistedRun && !state.loading && <div className="empty"><div className="mark">w</div><h2>무엇부터 함께할까요?</h2><p>생각을 정리하거나, 궁금한 내용을 물어보세요.</p>{!session && <Button variant="primary" disabled={state.connection !== 'online' || state.busy || !!state.pending} onClick={create}>첫 대화 시작</Button>}</div>}
         {messages.map((message) => {
@@ -79,12 +102,12 @@ export function Chat({ state, model, reconnect, approvals, create, visible = tru
           const text = message.role === 'assistant' && messageRun ? messageRun.text : message.text;
           return <article key={message.messageId} className={`message ${message.role}`} aria-label={message.role === 'user' ? '내 메시지' : 'AI 메시지'}><div className="message-author">{message.role === 'user' ? '나' : <><span className="spark">✦</span>AI</>}</div><div className="message-text">{text || (active(messageRun) ? '응답을 기다리고 있습니다…' : '저장된 응답 내용이 없습니다.')}</div>{message.role === 'assistant' && messageRun && <div className="message-note">{runLabel(messageRun)}</div>}{message.role === 'assistant' && messageRun && <FileToolHistory tools={messageRun.tools} />}</article>;
         })}
-        {page?.nextAfter !== null && page?.nextAfter !== undefined && <Button className="more-records" disabled={state.loading || state.connection !== 'online'} onClick={() => { stick.current = false; void model.moreMessages(); }}>다음 기록 불러오기</Button>}
+        {page?.nextAfter !== null && page?.nextAfter !== undefined && <Button className="more-records" disabled={state.loading || state.connection !== 'online'} onClick={() => { stick.current = false; scrollPosition.current = { key: positionKey, top: scroll.current!.scrollTop, stick: false }; void model.moreMessages(); }}>다음 기록 불러오기</Button>}
         {unlistedRun && <article className="message assistant"><div className="message-author"><span className="spark">✦</span>최근 응답</div>{page && page.nextAfter !== null && <p className="muted small">중간 대화는 ‘다음 기록 불러오기’로 확인할 수 있습니다.</p>}<div className="message-text">{run.text || (active(run) ? '응답을 기다리고 있습니다…' : '저장된 응답 내용이 없습니다.')}</div><div className="message-note">{runLabel(run)}</div></article>}
         {unlistedRun && <FileToolHistory tools={run.tools} />}
       </div>
     </div>
-    {newOutput && <Button className="new-output" onClick={() => { stick.current = true; scroll.current!.scrollTop = scroll.current!.scrollHeight; setNewOutput(false); }}>최근 내용으로 이동 ↓</Button>}
+    {newOutput && <Button className="new-output" onClick={() => { stick.current = true; scroll.current!.scrollTop = scroll.current!.scrollHeight; scrollPosition.current = { key: positionKey, top: scroll.current!.scrollTop, stick: true }; setNewOutput(false); }}>최근 내용으로 이동 ↓</Button>}
     <div className="compose-area">
     {approvals && <div className="approval-stack">{approvals}</div>}
     {warning && <div className={`notice${warning.neutral ? ' notice--neutral' : ''}`} role="status"><strong>{warning.title}</strong><p>{warning.text}</p>
