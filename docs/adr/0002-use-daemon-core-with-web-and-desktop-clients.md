@@ -1,7 +1,8 @@
 # 0002. Daemon 중심 코어와 웹·데스크톱 공통 접속 구조 채택
 
 - 날짜: 2026-09-08
-- Status: Accepted
+- Status: Superseded
+- 대체 결정: [0016. AI Agent 관리 기반으로 Paseo 채택](0016-use-paseo-for-agent-management.md) — 공통 Daemon·접속과 수명 원칙을 이어받고, Agent 내부 실행 책임을 Paseo에 위임한다. 아래 원문은 당시 근거로 보존한다.
 - 관련 Work Item: [#3 WorkNaru 플랫폼 초기 아키텍처 설계](https://github.com/NaruForge/worknaru/issues/3)
 - 관련 ADR: [0001. 외부 AI 에이전트 연결에 ACP 채택](0001-use-acp-for-agent-connections.md)
 - 관련 문서: [제품 방향](../../README.md), [프로젝트 기록 규약](../project-records.md)

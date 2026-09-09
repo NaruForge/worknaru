@@ -3,7 +3,7 @@
 ## Provider와 적용 대상
 
 - Work Item provider: **GitHub**.
-- 저장소: [NaruForge/worknaru](https://github.com/NaruForge/worknaru) (비공개).
+- 저장소: [NaruForge/worknaru](https://github.com/NaruForge/worknaru) (공개).
 - Project: [worknaru #6](https://github.com/users/NaruForge/projects/6), 소유자 `NaruForge`, 비공개, ID `PVT_kwHOAmTnZc4BiyCQ`.
 - Progress field: native `Status`, ID `PVTSSF_lAHOAmTnZc4BiyCQzhhoxCo`.
 - Board: [Repository work](https://github.com/users/NaruForge/projects/6/views/1), Status별 그룹, filter `repo:NaruForge/worknaru is:issue`.
@@ -11,6 +11,8 @@
 - Project를 읽거나 쓸 수 없는 경우 진행 상태를 로컬 backlog나 status label로 대신 기록하지 않고 접근 문제를 보고한다.
 
 2026-09-08 사용자가 저장소 주소 변경을 확인했다. GitHub에서 현재 저장소와 Project의 소유자, 비공개 여부, 저장소 연결 및 동일한 Project ID를 재확인해 위 주소를 갱신했다. 사용자 요청에 따라 Board filter도 현재 저장소 주소로 수정하고 재조회로 적용을 확인했다. 설치 당시의 근거와 Blueprint provenance는 당시 기록으로 보존한다.
+
+2026-09-09 사용자가 “내가 공개로 전환했습니다.”라고 저장소 공개 전환을 확인했다. GitHub에서 저장소 소유자 `NaruForge`와 공개 상태, 동일한 Project ID 및 Project의 비공개 상태를 재확인해 현재 저장소 표시만 갱신했다. Project 공개 범위·구성과 설치 당시 provenance는 변경하지 않는다.
 
 이 문서와 Agent 지침, GitHub의 native surface만으로 운영한다. Blueprint 재열람, bootstrap Skill, 서비스, 데이터베이스, 상태 동기화나 수동 index는 일상 운영의 전제 조건이 아니다.
 

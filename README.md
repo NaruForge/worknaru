@@ -141,6 +141,8 @@ Module에는 수동 편집, 규칙 기반 처리와 AI 상호작용을 함께 �
 
 업무 데이터의 소유는 그 의미와 규칙에 대한 책임을 뜻합니다. 실제 저장 위치나 데이터베이스를 Module마다 따로 두는 결정은 아닙니다. 플랫폼은 문서의 업무상 확정 조건을 정하지 않으며, Module은 AI를 사용할 때 플랫폼의 공통 연결·실행 기능을 이용합니다.
 
+플랫폼의 AI Agent 관리 기반은 [Paseo Server/Client를 사용하도록 결정했습니다](docs/adr/0016-use-paseo-for-agent-management.md). Provider 연결·Agent 생명주기·native 기록은 Paseo에 위임하고, WorkNaru는 업무 API·Module 데이터·사람의 검토·결과물을 소유합니다. 필요한 내부 `DaemonClient` 사용은 작은 연결 코드에 한정합니다. 기존 대화는 이식하지 않고 새 데이터로 시작하며, 현재 기능·코드의 보존 없이 필요한 부분을 새로 만들 수 있습니다. 실제 필요한 사용자 흐름을 Paseo 기능에 맞게 구성합니다. 아래 실행 명령과 개발 안내는 아직 현재 ACP 구현 기준입니다. 분석 근거는 [채택 재검토](docs/research/2026-09-09-issue34-runtime-and-product-direction.md), 이행 범위와 계획은 [Migration 이슈 #35](https://github.com/NaruForge/worknaru/issues/35)에 기록합니다.
+
 ### 업무 서비스의 예시
 
 다음은 `lg-report-gen`과 `DocCan` 프로젝트가 제공하는 업무를 기준으로 한 예시입니다. 기존 프로젝트의 WorkNaru 통합이나 구현 완료를 뜻하지 않습니다.
