@@ -57,7 +57,9 @@ Issue 간 선행관계는 native dependency에 기록하고 본문에 목록을 
 | In review | `In review` | 결과 검토 또는 검증 중 |
 | Done | `Done` | 완료 조건 충족, Issue를 completed로 종료 |
 
-권한과 작업 승인이 있는 사람이 실제 Issue를 전용 Project에 추가한다. Project 밖 Issue는 진행 상태 미지정이며, 제목·본문·label에서 상태를 추정하지 않는다. Project 추가 시 Inbox로 시작하고 실제 근거에 따라 전이한다. PR은 구현 증거로 Issue에 연결하며 별도 Work Item이나 두 번째 lifecycle로 운영하지 않는다.
+이 저장소의 새 Issue는 전용 Project의 native `Auto-add to project` workflow로 자동 등록한다. 대상 저장소는 `NaruForge/worknaru`, 필터는 `is:issue`로 설정해 PR과 다른 저장소의 Issue를 제외한다. 기존 `Item added to project` workflow는 Issue가 추가될 때 native `Status`를 `Inbox`로 설정하며, 이후에는 실제 근거에 따라 전이한다. PR은 구현 증거로 Issue에 연결하며 별도 Work Item이나 두 번째 lifecycle로 운영하지 않는다.
+
+Auto-add 활성화만으로 기존 미등록 Issue를 소급 등록하지는 않는다. 다만 필터에 맞는 기존 미등록 Issue도 이후 수정되면 자동 등록되어 Inbox로 시작할 수 있다. 이는 [GitHub native auto-add 동작](https://docs.github.com/en/issues/planning-and-tracking-with-projects/automating-your-project/adding-items-automatically)이다. 기존 항목을 다시 추가하거나 Status를 초기화하지 않고, 별도 승인 없는 일괄 등록·상태 변경은 하지 않는다. Project 밖 Issue는 진행 상태 미지정이며, 제목·본문·label에서 상태를 추정하지 않는다. 자동 등록이 확인되지 않으면 접근 권한과 workflow 설정을 확인하고 문제를 보고한다. 수동 등록이 필요한 경우 해당 작업의 권한과 승인을 확인하고 기존 항목과의 중복을 피한다.
 
 완료 시 검증 증거 및 구현 링크를 Issue에 남기고 `Status = Done`, `state = closed`, `state_reason = completed`의 일치를 확인한다. 한쪽 갱신 실패 시 불일치를 보고하고 완료했다고 주장하지 않는다.
 
@@ -83,9 +85,9 @@ Work Item, ADR, commit과 PR은 서로 링크하고 내용을 복사하지 않�
 
 ## Native 구성과 승인 경계
 
-승인된 초기 원격 구성은 비공개 `worknaru` Project 하나, 이 저장소 연결, 위 여섯 Status, Status별 `Repository work` board, item 추가 시 Inbox workflow, 새 label `idea`, `work`, `blocked`, `needs-triage`다. 기존 label 10개는 보존한다. 자동 close-to-Done와 merge-to-Done는 비활성화하며 auto-add, 자동 archive와 자동 종료는 사용하지 않는다. Milestone, Priority, area는 실제 필요가 승인될 때 도입한다.
+승인된 초기 원격 구성은 비공개 `worknaru` Project 하나, 이 저장소 연결, 위 여섯 Status, Status별 `Repository work` board, item 추가 시 Inbox workflow, 새 label `idea`, `work`, `blocked`, `needs-triage`다. 기존 label 10개는 보존한다. 2026-09-09 사용자 승인으로 이 저장소 Issue만 대상으로 하는 native auto-add를 활성화하고 기존 Issue 추가 시 Inbox workflow를 유지했다. 자동 close-to-Done와 merge-to-Done는 비활성화하며 자동 archive와 자동 종료는 사용하지 않는다. 이번 변경은 자동 등록과 초기 Inbox 설정에 한정하며, 기존 Issue의 상태 변경을 포함하지 않는다. 프로젝트 로컬 운영 방식 변경이므로 Blueprint 계약과 Installation Receipt의 revision/source는 유지한다. Milestone, Priority, area는 실제 필요가 승인될 때 도입한다.
 
-Issue forms는 기본 브랜치에 게시되어야 GitHub New issue 화면에서 사용할 수 있다. 기본 label은 저장소에 이미 존재해야 적용된다. 양식은 담당자나 Project를 자동 배정하지 않으며 `blank_issues_enabled: true`를 유지한다.
+Issue forms는 기본 브랜치에 게시되어야 GitHub New issue 화면에서 사용할 수 있다. 기본 label은 저장소에 이미 존재해야 적용된다. 양식 자체는 담당자나 Project를 배정하지 않으며 `blank_issues_enabled: true`를 유지한다. 양식 또는 빈 Issue 등 생성 경로와 관계없이 위 native auto-add workflow가 Project 등록을 담당한다.
 
 Provider 선택은 인증, 권한 확대 또는 원격 쓰기 승인이 아니다. 향후 원격 변경, 게시, commit, push, Issue 조작, ADR 승인·대체는 해당 작업의 사용자 승인과 프로젝트 정책에 따른다. 이번 설치 승인은 반복 운영에 대한 포괄적 승인이 아니다.
 
