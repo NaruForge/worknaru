@@ -218,15 +218,15 @@ Windows 감독 프로세스가 이름이 있는 Job Object를 만들고, 에이�
 
 `sessions.get`의 `aiUnavailable: 0`은 새 실행을 접수할 수 있다는 뜻이며 재개 성공 보장은 아니다. `runs.start`의 접수 결과와 실제 재개·질문 실행을 구분한다. 재개 미지원은 `SESSION_RESUME_UNSUPPORTED`, 재개 거절·프로바이더 기록 없음은 `SESSION_RESUME_FAILED`, 30초 초과는 `SESSION_RESUME_TIMEOUT`으로 실패한다. 이때 새 질문의 `delivery`는 `not_attempted`이고 입력·빈 답변·실패 Run 및 기존 기록이 보존된다. UI는 재개 실패를 안내하며 새 대화를 시작할 수 있다. 실패·취소 후 해당 대화는 `aiUnavailable: 1`과 `SESSION_UNAVAILABLE`로 추가 실행을 막으며 재시작만으로 실패한 질문을 재시도하지 않는다. 정리까지 확인하지 못하면 `PROCESS_CLEANUP_UNKNOWN`이 우선한다.
 
-ACP 비활성 상태에서도 기록은 조회할 수 있다. 프로세스 정리·재개 자격 확인은 `--acp` 재시작에서 수행한다. 프로바이더 기록은 개발 데이터의 `codex` 하위에 있으므로 SQLite 파일만 복사해서는 맥락 재개를 보장하지 않는다. 현재 저장 형식은 설정 필드를 추가한 v3이며, 이전 대화의 모델 선택과 migration은 아래 Settings 절을 따른다. 관련 작업: [#12 재실행 후 대화 이어가기](https://github.com/NaruForge/worknaru/issues/12).
+ACP 비활성 상태에서도 기록은 조회할 수 있다. 프로세스 정리·재개 자격 확인은 `--acp` 재시작에서 수행한다. 프로바이더 기록은 개발 데이터의 `codex` 하위에 있으므로 SQLite 파일만 복사해서는 맥락 재개를 보장하지 않는다. 현재 저장 형식은 파일 승인 기록을 추가한 v4다. 파일 승인 migration은 아래 파일 수정 절을, 이전 대화의 모델 선택과 v3 변경은 Settings 절을 따른다. 관련 작업: [#12 재실행 후 대화 이어가기](https://github.com/NaruForge/worknaru/issues/12).
 
 ### 현재 한도와 검증 범위
 
 - 텍스트 입력과 실행별 답변은 각각 UTF-8 16KiB다. 답변 한도 초과 시 저장된 부분을 보존하고 `OUTPUT_LIMIT`으로 실패 처리한다. 첨부 파일·이미지·큰 답변의 조각 조회는 후속 범위다.
 - 데몬당 열린 에이전트 연결은 최대 4개, 클라이언트당 Run 구독은 최대 16개다. 종료된 에이전트는 연결 수에서 제외하고 해당 Session을 사용 불가로 표시한다. 연결 해제 UI·유휴 정리 정책은 후속 범위이며 초기 연결은 정상 대화의 맥락 유지를 위해 유지한다.
 - 감독 프로세스 준비 15초, ACP 초기화·Session 생성·재개 각 30초, 질문 실행 120초의 한도를 적용한다. 정상 취소는 ACP 알림 뒤 프로세스 트리 정리까지 확인한다. 재개 중 취소는 준비 중인 프로세스를 정리하며 새 질문을 보내지 않는다. Job 조사·종료를 확인하지 못하면 성공으로 간주하지 않는다.
-- 텍스트 응답을 지시하고 셸·앱·플러그인 등 연결 기능을 끈 개발 설정으로 실행한다. ACP 파일·터미널 기능을 제공하거나 권한 요청을 자동 승인하지 않는다. 도구 이벤트는 `TOOLS_UNSUPPORTED`, 권한 요청은 `PERMISSION_UNSUPPORTED`로 실패 처리한다. 이 클라이언트 설정은 악성 에이전트를 격리하는 보안 경계가 아니며, 어댑터의 `read-only`라는 모드 이름도 실제 파일시스템 읽기 전용을 보장하지 않는다. 도구 실행·승인 UI는 후속 범위다.
-- 저장소 v1을 처음 열면 SQLite `VACUUM INTO`로 `records-v1-<uuid>.sqlite` 백업을 만든 다음 트랜잭션으로 v2를 거쳐 현재 v3로 전환한다. v2의 백업·전환은 아래 Settings 절을 따른다. 메시지·최초 접수 결과·epoch를 유지한다. 지원 밖 형식이나 실패한 변경을 빈 DB로 대체하지 않는다. 사용자용 백업·복원 기능은 제공하지 않는다.
+- 텍스트 대화와 아래의 전용 Workspace 파일 도구를 제공한다. 셸·앱·플러그인 등 기존 연결 기능은 끈다. 전용 파일 도구의 ACP 표시 이벤트만 허용하고, 다른 도구 이벤트는 `TOOLS_UNSUPPORTED`, 별도 ACP 권한 요청은 `PERMISSION_UNSUPPORTED`로 종료한다. 파일 변경 승인은 Daemon이 직접 처리한다. 이 클라이언트 설정은 악성 에이전트를 격리하는 보안 경계가 아니며, 어댑터의 `read-only`라는 모드 이름도 실제 파일시스템 읽기 전용을 보장하지 않는다.
+- 저장소 v1을 처음 열면 SQLite `VACUUM INTO`로 `records-v1-<uuid>.sqlite` 백업을 만든 다음 트랜잭션으로 v2를 거쳐 현재 v4로 전환한다. v2의 백업·전환은 아래 Settings 절을 따른다. 메시지·최초 접수 결과·epoch를 유지한다. 지원 밖 형식이나 실패한 변경을 빈 DB로 대체하지 않는다. 사용자용 백업·복원 기능은 제공하지 않는다.
 
 `npm test`는 실제 SQLite와 별도 ACP 시험 프로세스로 중복·경쟁·스트리밍·취소·시작 중 취소·강제 종료·재시작·저장 장애·출력 및 프로토콜 한도·v1 변환·개발용 클라이언트를 검증한다. 시험용 에이전트 선택은 시험 진입점에만 있으며 제품 실행 옵션으로 노출하지 않는다.
 
@@ -288,11 +288,54 @@ npm run test:web:live
 
 Windows의 예약 포트 범위 등으로 5173에서 `EACCES`가 발생하면 검증 시 `$env:WORKNARU_TEST_WEB_PORT = '15173'`처럼 사용 가능한 포트를 지정한다. `test:web`와 `test:web:live` 모두 화면 서버·허용 Origin·브라우저 주소를 함께 맞춘다. 기본값은 5173이며 자동으로 임의 포트로 바꾸지 않는다. 수동 실행에서는 `npm run dev:web -- --port 15173` 또는 `npm run preview:web -- --port 15173`와 Daemon의 `--origin http://127.0.0.1:15173`을 함께 사용한다.
 
+## Workspace 파일 수정과 승인
+
+관련 작업은 [#22](https://github.com/NaruForge/worknaru/issues/22)다. `npm run dev`로 실행하고 Chat에서 기존 파일의 경로와 원하는 변경을 요청한다. 예를 들어 Workspace에 있는 `sample.txt`에 대해 “sample.txt를 읽고 마지막 문장을 ‘검토 완료’로 바꿔줘”라고 요청한다. 파일 도구는 Workspace 안의 기존 UTF-8 텍스트 파일 하나를 다루며, 읽기와 수정 전후 내용은 각각 8KiB 이하다.
+
+공통 **파일 수정 승인** 화면에서 경로와 파일 전체의 수정 전후 내용을 확인한다. **이번 수정 허용**은 해당 수정안만 적용하고, **거절**은 파일을 유지한 채 거절 결과를 AI에 전달한다. **실행 중지**는 대기 요청을 취소하고 해당 AI 실행을 정리한다. 창을 닫는 것은 승인이 아니며 상단의 승인 버튼으로 다시 연다. 같은 Daemon에 재접속하면 저장된 대기 요청을 다시 표시한다. 승인 대기는 최대 5분이고, AI의 120초 응답 제한에는 이 대기 시간을 포함하지 않는다.
+
+파일 경로와 수정 전후 내용, 상태·오류는 플랫폼 SQLite에 보관한다. Chat의 파일 기록을 펼쳐 확인하며 이후 질문이나 재시작 뒤에도 조회할 수 있다. 설정과 파일 내용은 AI가 사용하는 자료이므로 사용자가 지정한 파일만 요청한다. 파일 읽기는 별도의 승인 창 없이 수행하며, 파일 수정 도구가 실제로 쓰기 전에 승인을 기다린다.
+
+다음 조건을 적용한다.
+
+- 상대 경로의 기존 일반 파일만 사용한다. Workspace 밖, `..`, 링크·junction·hard link, Windows 예약 이름·ADS, `.git`·`.codex`·`.agents`·`node_modules` 및 이번 Daemon 데이터 영역은 거절한다. 파일 생성·삭제·이동, 디렉터리 작업과 임의 셸 실행은 제공하지 않는다.
+- 에이전트가 보낸 `before`가 실제 원문과 일치해야 수정안을 접수한다. 허용 시 내용과 파일 식별·변경 시각을 다시 비교한다. 승인 대기 중 원본이 달라지면 `FILE_CONFLICT`로 종료하고 덮어쓰지 않는다.
+- 한 Run에서 최대 4개의 수정 요청을 기록하고, 동시에 하나만 승인 대기한다. 각 요청은 한 파일이며 별도 승인이 필요하다.
+- 두 탭의 응답은 첫 유효 응답만 처리한다. 같은 요청 ID의 재전송은 최초 접수 결과를 반환하고 실제 수정을 반복하지 않는다. 다른 요청 ID로 이미 처리된 승인에 응답하면 `PERMISSION_RESOLVED`다.
+- 허용 접수와 파일 적용 완료는 다르다. 화면이 응답을 놓치면 기존 `requests.get`으로 접수를 확인하고 `runs.get/watch`로 현재 결과를 조회한다. 새 요청으로 자동 전송하지 않는다.
+- Run 취소·종료, 에이전트 종료, 승인 시간 초과에는 대기 요청을 취소한다. Daemon 재시작 시 미실행 요청은 취소하고 이미 적용을 시도하던 요청은 `unknown / FILE_OUTCOME_UNKNOWN`으로 남긴다. SQLite와 파일 쓰기는 하나의 원자적 작업이 아니므로 중단 시 파일이 일부 또는 전부 바뀌었을 수 있다. 자동 재적용·원복하지 않으며 실제 파일을 확인한다.
+
+`permissions.respond`는 다음 변경 요청으로 호출한다. `runId`와 `toolId`는 `runs.get/watch`의 `tools` 배열에서 가져온다. 요청 ID와 epoch는 다른 변경 연산과 같은 접수 계약을 사용한다.
+
+```json
+{
+  "type": "request", "callId": "approve-call-1", "method": "permissions.respond",
+  "requestId": "approve-request-1", "storeEpoch": "<storeEpoch>",
+  "params": { "runId": "<runId>", "toolId": "<toolId>", "decision": "allow" }
+}
+```
+
+`decision`은 `allow` 또는 `reject`다. 성공 응답은 `{ accepted: true, requestId, run }`이고 접수 시점의 Run 스냅샷을 포함한다. `tools`에는 `toolId`, `path`, `before`, `after`, `state`, `errorCode`, `createdAt`이 있다. 상태는 `pending → approved → applying → completed` 또는 `rejected`, `failed`, `cancelled`, `unknown`이다. 내부 파일 식별자와 도구 연결 토큰은 클라이언트에 전달하지 않는다. ACP를 끈 기록 조회 실행에서도 파일 기록은 읽을 수 있지만 승인 응답은 받지 않는다. 터미널 Chat 클라이언트에는 승인 입력 UI가 없으므로 파일 승인은 Web UI에서 처리한다.
+
+구현은 기존 ACP 연결을 유지하며, 대화별 Codex 설정으로 `worknaru_files` MCP stdio 도구 두 개(`read_text_file`, `edit_text_file`)를 제공한다. `codex-acp` 1.10.0의 표준 `mcpServers` 변환은 도구별 승인 모드와 시간 제한을 전달하지 않으므로 대화의 `CODEX_CONFIG`에 함께 전달한다. 이 두 내부 도구의 Codex 승인 모드는 `approve`, 호출 제한은 360초다. 이는 내부 도구 진입 시 중복 승인을 생략하는 설정이며 실제 파일 쓰기는 항상 WorkNaru의 사용자 승인을 기다린다. 다른 ACP 승인 요청은 자동 허용하지 않는다. 메타데이터 조회에는 파일 도구를 연결하지 않는다. [Codex 설정 계약](https://learn.chatgpt.com/docs/config-file/config-reference)
+
+stdio 연결 프로세스는 직접 파일에 접근하지 않고 대화별 임시 토큰으로 Daemon의 loopback 파일 도구 서버에 요청한다. 서버는 정확한 Host·경로, Origin 부재, 토큰과 현재 Session·Run을 확인한다. 도구 프로세스는 기존 Windows Job에 속하고, 대화 종료 시 토큰을 폐기하며 Daemon 종료 시 도구 서버를 닫는다. 이는 동일 OS 사용자의 악성 코드나 악성 프로바이더를 격리하는 기능은 아니다.
+
+저장소 v3을 처음 열 때 `records-v3-<uuid>.sqlite`로 백업한 다음 파일 승인 테이블을 추가해 v4로 전환한다. 기존 메시지·Session·Run·설정·접수 결과·epoch를 보존한다. v1/v2에서도 해당 버전의 기존 백업 후 v4까지 전환한다.
+
+일반 `npm test`와 `npm run test:web`는 실제 모델 대신 가짜 ACP와 실제 MCP stdio 연결을 사용해 승인·거절·취소, 두 탭 경쟁, 재접속·접수 유실, 원본 충돌과 재시작을 검증한다. 실제 Codex 파일 수정 검증은 임시 Workspace의 `sample.txt`만 대상으로, `gpt-5.6-luna / low`의 요청 2회로 브라우저 허용과 재시작 후 거절을 확인한다.
+
+```powershell
+$env:WORKNARU_CODEX_PATH = (Get-Command codex.exe).Source
+$env:WORKNARU_TEST_WEB_PORT = '15173'
+npm run test:files:live
+```
+
 ## Settings와 대화별 AI 설정
 
 관련 작업: [#14 Settings와 대화별 모델·추론 강도](https://github.com/NaruForge/worknaru/issues/14).
 
-좌측 서비스 탐색 하단의 **설정(Settings)** 에서 Daemon 연결 설정, Codex 인증 상태, 새 대화의 기본 Model·Reasoning Effort를 확인한다. 좁은 화면에서는 상단 서비스 버튼으로 Settings를 연다. 기존 상단 연결 상태 버튼도 연결 창을 연다. Permission은 **텍스트 대화 · 도구 실행 미지원** 상태만 표시한다. 로그인·로그아웃·계정 전환 및 도구 권한 변경은 구현 범위에 포함하지 않는다.
+좌측 서비스 탐색 하단의 **설정(Settings)** 에서 Daemon 연결 설정, Codex 인증 상태, 새 대화의 기본 Model·Reasoning Effort를 확인한다. 좁은 화면에서는 상단 서비스 버튼으로 Settings를 연다. 기존 상단 연결 상태 버튼도 연결 창을 연다. Permission에는 **Workspace 텍스트 파일 수정 · 요청마다 승인**을 표시한다. 로그인·로그아웃·계정 전환, 상시 허용과 범용 도구 권한 정책 편집은 제공하지 않는다.
 
 기본값과 대화별 선택의 원본은 플랫폼 SQLite다. 초기 기본값은 `gpt-5.6-luna`·`low`이며 일반 대화에서는 지원 모델 중 직접 바꿀 수 있다. 기본값은 동일 데이터 영역에서 이후 생성하는 대화에만 복사한다. 기존 대화의 선택은 바뀌지 않는다. Chat 입력창에서 바꾸는 값은 해당 대화의 다음 메시지부터 적용하며, 실행 중에는 서버에서도 `SESSION_BUSY`로 변경을 거절한다. 모델을 바꿀 때 현재 추론 강도를 지원하면 유지하고, 지원하지 않으면 `low` 또는 제공자가 나열한 첫 지원값으로 전환한다.
 

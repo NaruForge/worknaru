@@ -28,6 +28,7 @@ export const requestSchema = z.discriminatedUnion('method', [
   z.strictObject({ ...mutation, method: z.literal('sessions.configure'), params: z.strictObject({ sessionId: uuid, selection: aiSelectionSchema }) }),
   z.strictObject({ ...mutation, method: z.literal('runs.start'), params: z.strictObject({ sessionId: uuid, text: textInput }) }),
   z.strictObject({ ...mutation, method: z.literal('runs.cancel'), params: z.strictObject({ runId: uuid }) }),
+  z.strictObject({ ...mutation, method: z.literal('permissions.respond'), params: z.strictObject({ runId: uuid, toolId: uuid, decision: z.enum(['allow', 'reject']) }) }),
   z.strictObject({ ...base, method: z.literal('runs.get'), params: z.strictObject({ runId: uuid }) }),
   z.strictObject({ ...base, method: z.literal('runs.watch'), params: z.strictObject({ runId: uuid }) }),
   z.strictObject({ ...base, method: z.literal('runs.unwatch'), params: z.strictObject({ runId: uuid }) }),

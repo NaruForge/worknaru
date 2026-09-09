@@ -5,6 +5,7 @@ import { Chat, ConversationList } from './chat.js';
 import { Icon } from './icons.js';
 import { AiControls } from './ai-controls.js';
 import { developmentEndpoint, developmentKeyRequired, useDevServer } from './dev-server.js';
+import { FilePreview, fileStateLabel } from './file-approval.js';
 
 function Dialog({ title, children, close, drawer = false }: { title: string; children: ReactNode; close: () => void; drawer?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -56,6 +57,15 @@ export function App({ model }: { model: ChatStateStore }) {
   const [keyRequired] = useState(developmentKeyRequired);
   const [connectionOpen, setConnectionOpen] = useState(keyRequired);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [permissionId, setPermissionId] = useState<string>();
+  const seenPermissions = useRef(new Set<string>());
+  const fileRequests = Object.values(state.runs).flatMap((run) => run.tools.map((tool) => ({ run, tool })));
+  const waiting = fileRequests.filter(({ run, tool }) => run.state === 'running' && tool.state === 'pending');
+  const permission = fileRequests.find(({ tool }) => tool.toolId === permissionId);
+  useEffect(() => {
+    const unseen = waiting.find(({ tool }) => !seenPermissions.current.has(tool.toolId));
+    if (unseen && !permissionId && !connectionOpen && !settingsOpen) { seenPermissions.current.add(unseen.tool.toolId); setPermissionId(unseen.tool.toolId); }
+  }, [waiting, permissionId, connectionOpen, settingsOpen]);
   const [endpoint, setEndpoint] = useState(() => developmentEndpoint() ?? 'ws://127.0.0.1:4310/ws');
   const [tokenInput, setTokenInput] = useState('');
   const credentials = useRef({ endpoint: '', token: '' });
@@ -101,10 +111,26 @@ export function App({ model }: { model: ChatStateStore }) {
     <WorkspaceShell name={workspaceName} online={state.connection === 'online'} sidebar={wide && expanded ? list : undefined}
       theme={theme} toggleTheme={() => setTheme(theme === 'light' ? 'dark' : 'light')} connection={() => setConnectionOpen(true)}
       settings={() => { setSettingsOpen(true); refreshSettings(); }}
-      devStop={devStop}
+      devStop={<>{waiting.length > 0 && <button className="permission-badge" onClick={() => setPermissionId(waiting[0]!.tool.toolId)}>파일 수정 승인 {waiting.length}</button>}{devStop}</>}
       listOpen={wide ? expanded : drawer} navigationLabel="대화 목록 열기 또는 접기" toggleList={() => wide ? setExpanded(!expanded) : setDrawer(!drawer)}>
       <Chat state={state} model={model} reconnect={reconnect} />
     </WorkspaceShell>
+    {permission && <Dialog title="파일 수정 승인" close={() => setPermissionId(undefined)}>
+      <div className="permission-content"><p>Workspace의 파일 하나를 아래 내용으로 수정합니다.</p><FilePreview tool={permission.tool} />
+        <p role="status" aria-label="파일 수정 상태">{fileStateLabel(permission.tool)}</p>
+        {permission.tool.errorCode === 'FILE_CONFLICT' && <p>승인 대기 중 원본이 변경되어 덮어쓰지 않았습니다. 파일을 다시 읽고 수정안을 확인하세요.</p>}
+        {permission.tool.state === 'unknown' && <p>파일의 실제 내용을 확인하세요. 이 요청은 자동 재실행하지 않습니다.</p>}
+        {permission.tool.state === 'pending' && <><p className="muted small">이번 수정에만 적용됩니다. 창을 닫아도 승인되지 않습니다.</p><div className="permission-actions">
+          <button disabled={state.connection !== 'online' || state.busy || !!state.pending || !permission.run.storageAvailable} onClick={() => void model.respondPermission(permission.run.runId, permission.tool.toolId, 'reject')}>거절</button>
+          <button className="primary" disabled={state.connection !== 'online' || state.busy || !!state.pending || !permission.run.storageAvailable} onClick={() => void model.respondPermission(permission.run.runId, permission.tool.toolId, 'allow')}>이번 수정 허용</button>
+          <button disabled={state.connection !== 'online' || state.busy || !!state.pending || !permission.run.storageAvailable} onClick={() => void model.cancel(permission.run.runId)}>실행 중지</button>
+        </div></>}
+        {state.connection !== 'online' && <p role="status">연결이 끊겼습니다. 다시 연결한 뒤 현재 승인 상태를 확인하세요.</p>}
+        {!permission.run.storageAvailable && <p role="alert">저장 상태를 확인하지 못했습니다. 파일 적용 결과를 추정하지 말고 저장소 복구 후 다시 확인하세요.</p>}
+        {state.pending && <p role="status">{state.busy ? '접수 확인 중…' : '접수 여부 확인이 필요합니다.'}{!state.busy && <button onClick={() => void model.resolvePending()}>접수 확인</button>}</p>}
+        {state.error && <p className="error-text" role="alert">{state.error}</p>}
+      </div>
+    </Dialog>}
     {!wide && drawer && <Dialog title="대화 목록" close={() => setDrawer(false)} drawer>{list}</Dialog>}
     {settingsOpen && <Dialog title="Settings" close={() => setSettingsOpen(false)}>
       <div className="settings-content">
@@ -120,7 +146,7 @@ export function App({ model }: { model: ChatStateStore }) {
           <AiControls defaults info={state.aiInfo} selection={state.settings?.selection} disabled={state.connection !== 'online' || state.busy || !!state.pending || !!state.settingsLoading || !state.settings?.storageAvailable} change={(selection) => void model.configure(selection)} />
           {state.settingsError && <p className="error-text small" role="alert">{state.settingsError}</p>}
         </section>
-        <section><h2>Permission</h2><p className="muted small">텍스트 대화 · 도구 실행 미지원</p></section>
+        <section><h2>Permission</h2><p className="muted small">{state.ready?.capabilities.includes('permissions.respond') ? 'Workspace 텍스트 파일 수정 · 요청마다 변경 내용을 확인하고 허용 또는 거절합니다.' : '텍스트 대화 · 도구 실행 미지원'}</p></section>
         {state.pending && <p role="status">{state.busy ? '접수 확인 중…' : '접수 여부 확인이 필요합니다.'}{!state.busy && <button className="settings-action" onClick={() => void model.resolvePending()}>접수 확인</button>}</p>}
         {state.error && <p className="error-text small" role="alert">{state.error}</p>}
       </div>

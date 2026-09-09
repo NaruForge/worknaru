@@ -1,6 +1,6 @@
 import { test as base, expect } from '@playwright/test';
 import { join } from 'node:path';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { once } from 'node:events';
 import { startDevServers } from '../scripts/dev.mjs';
@@ -147,7 +147,7 @@ async function login(page, daemon, records) {
   await page.getByLabel('Daemon 주소').fill(daemon.url);
   await page.getByLabel('연결 키', { exact: true }).fill(records.token);
   await page.getByRole('dialog', { name: 'Workspace 연결' }).getByRole('button', { name: '연결', exact: true }).click();
-  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Workspace 연결' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: '연결됨', exact: true })).toBeVisible();
 }
 async function newSession(page) {
@@ -159,6 +159,116 @@ async function send(page, text) {
   await page.getByRole('textbox', { name: '메시지', exact: true }).fill(text);
   await page.getByRole('button', { name: '메시지 전송' }).click();
 }
+
+test('file approval restores after reload, shows the preview, and another tab sees the single result', async ({ page, context, daemon, records }) => {
+  const file = join(records.workspace, 'sample.txt'); writeFileSync(file, '원래 내용\n');
+  await login(page, daemon, records); await newSession(page); await send(page, 'edit-file');
+  const dialog = page.getByRole('dialog', { name: '파일 수정 승인' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator('.file-versions section').first()).toContainText('원래 내용');
+  await expect(dialog.locator('.file-versions section').last()).toContainText('수정된 내용');
+  expect(readFileSync(file, 'utf8')).toBe('원래 내용\n');
+  await dialog.getByRole('button', { name: '파일 수정 승인 닫기' }).click();
+  expect(readFileSync(file, 'utf8')).toBe('원래 내용\n');
+  await page.getByRole('button', { name: '파일 수정 승인 1' }).click(); await expect(dialog).toBeVisible();
+  await login(page, daemon, records); await expect(dialog).toBeVisible();
+  const other = await context.newPage(); await login(other, daemon, records);
+  const otherDialog = other.getByRole('dialog', { name: '파일 수정 승인' }); await expect(otherDialog).toBeVisible();
+  await page.setViewportSize({ width: 320, height: 850 });
+  expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await page.screenshot({ path: '.worknaru-test/file-approval-mobile.png' });
+  await dialog.getByRole('button', { name: '이번 수정 허용' }).click();
+  await expect(dialog.getByRole('status', { name: '파일 수정 상태' })).toContainText('파일 수정 완료');
+  await expect(otherDialog.getByRole('status', { name: '파일 수정 상태' })).toContainText('파일 수정 완료');
+  await expect(otherDialog.getByRole('button', { name: '이번 수정 허용' })).toHaveCount(0);
+  expect(readFileSync(file, 'utf8')).toBe('수정된 내용\n');
+  await other.screenshot({ path: '.worknaru-test/file-approval-desktop.png' });
+  await otherDialog.getByRole('button', { name: '파일 수정 승인 닫기' }).click();
+  await expect(other.locator('.run-state')).toHaveText('응답 완료');
+  await send(other, '후속 대화'); await expect(other.locator('.run-state')).toHaveText('응답 완료');
+  await login(other, daemon, records);
+  await expect(other.locator('.file-history')).toContainText('파일 수정 완료');
+});
+
+test('tail refresh includes file history when another client completes multiple runs between polls', async ({ page, daemon, records }) => {
+  writeFileSync(join(records.workspace, 'sample.txt'), '원래 내용\n');
+  let hold = false;
+  const queued = [];
+  await page.routeWebSocket(daemon.url, (socket) => {
+    const server = socket.connectToServer();
+    socket.onMessage((text) => {
+      if (hold && JSON.parse(text).method === 'sessions.get') queued.push(() => server.send(text));
+      else server.send(text);
+    });
+  });
+  await login(page, daemon, records); await newSession(page);
+  const other = await connect(records, daemon);
+  const session = (await other.call('sessions.list', { workspaceId: daemon.workspace.workspaceId })).result.sessions[0];
+  hold = true;
+  await expect.poll(() => queued.length).toBeGreaterThan(0);
+  const first = (await other.call('runs.start', { sessionId: session.sessionId, text: 'edit-file' }, mutation(other))).result.run;
+  let pending;
+  await expect.poll(async () => { pending = (await other.call('runs.get', { runId: first.runId })).result; return pending.tools[0]?.state; }).toBe('pending');
+  expect((await other.call('permissions.respond', { runId: first.runId, toolId: pending.tools[0].toolId, decision: 'allow' }, mutation(other))).ok).toBe(true);
+  await expect.poll(async () => (await other.call('runs.get', { runId: first.runId })).result.state).toBe('completed');
+  const second = (await other.call('runs.start', { sessionId: session.sessionId, text: '후속 대화' }, mutation(other))).result.run;
+  await expect.poll(async () => (await other.call('runs.get', { runId: second.runId })).result.state).toBe('completed');
+  hold = false;
+  for (const send of queued.splice(0)) send();
+  await expect(page.getByRole('article', { name: 'AI 메시지' })).toHaveCount(2);
+  const history = page.getByRole('article', { name: 'AI 메시지' }).first().locator('.file-history');
+  await expect(history).toContainText('파일 수정 완료');
+  await history.locator('summary').click();
+  await expect(history.locator('.file-versions section').last()).toContainText('수정된 내용');
+});
+
+test('rejection and stop in the common approval dialog preserve the original file', async ({ page, daemon, records }) => {
+  const file = join(records.workspace, 'sample.txt'); writeFileSync(file, '원래 내용\n');
+  await login(page, daemon, records);
+  for (const action of ['거절', '실행 중지']) {
+    await newSession(page); await send(page, 'edit-file');
+    const dialog = page.getByRole('dialog', { name: '파일 수정 승인' }); await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: action, exact: true }).click();
+    await expect(dialog.getByRole('status', { name: '파일 수정 상태' })).toContainText(action === '거절' ? '거절됨' : '취소됨');
+    await dialog.getByRole('button', { name: '파일 수정 승인 닫기' }).click();
+    await expect(page.locator('.run-state')).toHaveText(action === '거절' ? '응답 완료' : '중지 완료');
+    expect(readFileSync(file, 'utf8')).toBe('원래 내용\n');
+  }
+});
+
+test('lost permission response is queried after reload and never repeats the edit', async ({ page, daemon, records }) => {
+  const file = join(records.workspace, 'sample.txt'); writeFileSync(file, '원래 내용\n');
+  let drop = true; let permissionCall;
+  await page.routeWebSocket(daemon.url, (socket) => {
+    const server = socket.connectToServer();
+    socket.onMessage((text) => { const value = JSON.parse(text); if (value.method === 'permissions.respond') permissionCall = value.callId; server.send(text); });
+    server.onMessage((text) => { const value = JSON.parse(text); if (drop && permissionCall && value.type === 'response' && value.callId === permissionCall) { drop = false; socket.close(); server.close(); } else socket.send(text); });
+  });
+  await login(page, daemon, records); await newSession(page); await send(page, 'edit-file');
+  await page.getByRole('dialog', { name: '파일 수정 승인' }).getByRole('button', { name: '이번 수정 허용' }).click();
+  await expect(page.getByRole('button', { name: '연결 끊김', exact: true })).toBeVisible();
+  await login(page, daemon, records); await expect(page.locator('.run-state')).toHaveText('응답 완료');
+  await expect(page.locator('.file-history')).toContainText('파일 수정 완료');
+  expect(readFileSync(file, 'utf8')).toBe('수정된 내용\n'); expect(await page.evaluate(() => sessionStorage.length)).toBe(0);
+  const events = readFileSync(join(records.root, 'agent.log'), 'utf8').trim().split('\n').map(JSON.parse);
+  expect(events.filter((event) => event.type === 'file-result')).toHaveLength(1);
+});
+
+test('approval of another conversation stays current while viewing a different chat', async ({ page, daemon, records }) => {
+  const file = join(records.workspace, 'sample.txt'); writeFileSync(file, '원래 내용\n');
+  await login(page, daemon, records); await newSession(page); await send(page, 'edit-file');
+  const dialog = page.getByRole('dialog', { name: '파일 수정 승인' }); await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: '파일 수정 승인 닫기' }).click(); await newSession(page);
+  await expect(page.getByRole('heading', { name: '새 대화 2' })).toBeVisible();
+  await page.getByRole('button', { name: '파일 수정 승인 1' }).click();
+  await dialog.getByRole('button', { name: '이번 수정 허용' }).click();
+  await expect(dialog.getByRole('status', { name: '파일 수정 상태' })).toHaveText('파일 수정 완료');
+  await dialog.getByRole('button', { name: '파일 수정 승인 닫기' }).click();
+  expect(readFileSync(file, 'utf8')).toBe('수정된 내용\n');
+  await expect(page.getByRole('button', { name: '파일 수정 승인 1' })).toHaveCount(0);
+  await page.locator('.conversation-list button').filter({ hasText: '새 대화 1' }).click();
+  await expect(page.locator('.file-history')).toContainText('파일 수정 완료');
+});
 test('actual daemon text flow, drafts, IME, cancellation and responsive modal focus', async ({ page, daemon, records }) => {
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));

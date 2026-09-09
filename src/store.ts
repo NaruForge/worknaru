@@ -7,6 +7,7 @@ import type { Mutation, Request } from './protocol.js';
 import { validateDataFiles, workspacePath } from './paths.js';
 import { INITIAL_AI_SELECTION } from './ai-settings.js';
 import type { AiSelection } from './ai-settings.js';
+import type { FileApproval } from './file-approval.js';
 
 const APPLICATION_ID = 0x574e4152;
 const PRINCIPAL = 'local-owner';
@@ -14,7 +15,7 @@ const MODULE = 'chat';
 
 type Workspace = { workspaceId: string; path: string };
 type Session = { sessionId: string; workspaceId: string; title: string; seq: number; createdAt: string; aiUnavailable: number; latestRunId: string | null; latestRunState: Run['state'] | null; storageAvailable: boolean; model: string | null; reasoningEffort: string | null };
-export type Run = { runId: string; sessionId: string; state: 'running' | 'cancelling' | 'completed' | 'cancelled' | 'failed'; delivery: 'not_attempted' | 'attempting'; revision: number; text: string; errorCode: string | null; stopReason: string | null; createdAt: string; storageAvailable: boolean; model: string | null; reasoningEffort: string | null; modelConfirmed: number };
+export type Run = { runId: string; sessionId: string; state: 'running' | 'cancelling' | 'completed' | 'cancelled' | 'failed'; delivery: 'not_attempted' | 'attempting'; revision: number; text: string; errorCode: string | null; stopReason: string | null; createdAt: string; storageAvailable: boolean; model: string | null; reasoningEffort: string | null; modelConfirmed: number; tools: FileApproval[] };
 
 const RUN_SELECT = `SELECT r.id AS runId, r.session_id AS sessionId, r.state, r.delivery, r.revision, m.text, r.error_code AS errorCode, r.stop_reason AS stopReason, r.created_at AS createdAt, r.ai_model AS model, r.ai_effort AS reasoningEffort, r.model_confirmed AS modelConfirmed FROM runs r JOIN messages m ON m.run_id = r.id AND m.role = 'assistant'`;
 const SESSION_SELECT = `SELECT s.id AS sessionId, s.workspace_id AS workspaceId, s.title, s.seq, s.created_at AS createdAt,
@@ -71,7 +72,7 @@ export class RecordStore {
     const version = Number(this.db.prepare('PRAGMA user_version').get()!.user_version);
     const appId = Number(this.db.prepare('PRAGMA application_id').get()!.application_id);
     const objects = Number(this.db.prepare("SELECT count(*) AS count FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'").get()!.count);
-    if ((version === 0 && (objects !== 0 || appId !== 0)) || (version !== 0 && (![1, 2, 3].includes(version) || appId !== APPLICATION_ID))) {
+    if ((version === 0 && (objects !== 0 || appId !== 0)) || (version !== 0 && (![1, 2, 3, 4].includes(version) || appId !== APPLICATION_ID))) {
       throw new AppError('UNSUPPORTED_STORE', '지원하지 않는 저장소 형식입니다. 원본을 변경하지 않습니다.');
     }
     if (this.db.prepare('PRAGMA quick_check').get()!.quick_check !== 'ok') throw new Error('Integrity check failed');
@@ -140,6 +141,19 @@ export class RecordStore {
         `);
         this.db.prepare('INSERT INTO ai_settings (id, model, effort) VALUES (1, ?, ?)').run(INITIAL_AI_SELECTION.model, INITIAL_AI_SELECTION.reasoningEffort);
       });
+    }
+    if (version < 4) {
+      if (version === 3) this.db.prepare('VACUUM INTO ?').run(join(this.directory, `records-v3-${randomUUID()}.sqlite`));
+      this.transaction(() => this.db.exec(`
+        CREATE TABLE file_approvals (
+          seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, run_id TEXT NOT NULL REFERENCES runs(id),
+          path TEXT NOT NULL, before_text TEXT NOT NULL, after_text TEXT NOT NULL, file_identity TEXT NOT NULL,
+          state TEXT NOT NULL CHECK(state IN ('pending','approved','rejected','applying','completed','failed','cancelled','unknown')),
+          error_code TEXT, created_at TEXT NOT NULL
+        ) STRICT;
+        CREATE INDEX file_approvals_run ON file_approvals(run_id, seq);
+        PRAGMA user_version = 4;
+      `));
     }
     if (this.db.prepare('PRAGMA foreign_key_check').all().length !== 0) throw new Error('Broken references');
   }
@@ -222,6 +236,18 @@ export class RecordStore {
             this.db.prepare('UPDATE sessions SET ai_model = ?, ai_effort = ? WHERE id = ?')
               .run(request.params.selection.model, request.params.selection.reasoningEffort, sessionId);
             return { accepted: true, requestId: request.requestId, session: this.session(sessionId) };
+          });
+        }
+        case 'permissions.respond': {
+          this.run(request.params.runId);
+          return this.mutate(request, () => {
+            const run = this.run(request.params.runId);
+            const tool = run.tools.find((item) => item.toolId === request.params.toolId);
+            if (!tool) throw new AppError('NOT_FOUND', '접근 가능한 승인 요청을 찾을 수 없습니다.');
+            if (run.state !== 'running' || tool.state !== 'pending') throw new AppError('PERMISSION_RESOLVED', '이미 처리되거나 만료된 승인 요청입니다. 현재 상태를 확인하세요.');
+            this.db.prepare('UPDATE file_approvals SET state = ? WHERE id = ?').run(request.params.decision === 'allow' ? 'approved' : 'rejected', tool.toolId);
+            this.db.prepare('UPDATE runs SET revision = revision + 1 WHERE id = ?').run(run.runId);
+            return { accepted: true, requestId: request.requestId, run: this.run(run.runId) };
           });
         }
         case 'runs.get':
@@ -320,7 +346,51 @@ export class RecordStore {
     const run = this.db.prepare(RUN_SELECT + ' WHERE r.id = ?').get(runId) as Run | undefined;
     if (!run) throw new AppError('NOT_FOUND', '접근 가능한 실행을 찾을 수 없습니다.');
     this.session(run.sessionId);
-    return { ...run, storageAvailable: !this.failed && !this.closed };
+    const tools = this.db.prepare('SELECT id AS toolId, path, before_text AS before, after_text AS after, state, error_code AS errorCode, created_at AS createdAt FROM file_approvals WHERE run_id = ? ORDER BY seq').all(runId) as FileApproval[];
+    return { ...run, tools, storageAvailable: !this.failed && !this.closed };
+  }
+
+  proposeFile(runId: string, path: string, before: string, after: string, identity: string): FileApproval {
+    return this.transaction(() => {
+      const run = this.run(runId);
+      if (run.state !== 'running') throw new AppError('RUN_INACTIVE', '실행이 종료되어 파일 수정을 요청할 수 없습니다.');
+      if (run.tools.some((tool) => ['pending', 'approved', 'applying'].includes(tool.state))) throw new AppError('PERMISSION_PENDING', '먼저 대기 중인 파일 수정 요청을 처리하세요.');
+      if (run.tools.length >= 4) throw new AppError('TOOL_LIMIT', '한 실행의 파일 수정 요청은 4회까지입니다.');
+      const tool: FileApproval = { toolId: randomUUID(), path, before, after, state: 'pending', errorCode: null, createdAt: new Date().toISOString() };
+      this.db.prepare('INSERT INTO file_approvals (id, run_id, path, before_text, after_text, file_identity, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(tool.toolId, runId, path, before, after, identity, tool.state, tool.createdAt);
+      this.db.prepare('UPDATE runs SET revision = revision + 1 WHERE id = ?').run(runId);
+      return tool;
+    });
+  }
+
+  claimFile(runId: string, toolId: string): { tool: FileApproval; identity: string } | undefined {
+    return this.transaction(() => {
+      const run = this.run(runId);
+      const tool = run.tools.find((item) => item.toolId === toolId);
+      if (run.state !== 'running' || tool?.state !== 'approved') return;
+      this.db.prepare("UPDATE file_approvals SET state = 'applying' WHERE id = ?").run(toolId);
+      this.db.prepare('UPDATE runs SET revision = revision + 1 WHERE id = ?').run(runId);
+      const identity = this.db.prepare('SELECT file_identity FROM file_approvals WHERE id = ?').get(toolId)!.file_identity as string;
+      return { tool, identity };
+    });
+  }
+
+  finishFile(runId: string, toolId: string, state: 'completed' | 'failed' | 'cancelled' | 'unknown', code: string | null = null) {
+    return this.transaction(() => {
+      this.run(runId);
+      this.db.prepare("UPDATE file_approvals SET state = ?, error_code = ? WHERE id = ? AND run_id = ? AND state IN ('pending','approved','applying')").run(state, code, toolId, runId);
+      this.db.prepare('UPDATE runs SET revision = revision + 1 WHERE id = ?').run(runId);
+      return this.run(runId);
+    });
+  }
+
+  recoverFiles() {
+    this.transaction(() => {
+      this.db.exec(`UPDATE runs SET revision = revision + 1 WHERE id IN (SELECT run_id FROM file_approvals WHERE state IN ('pending','approved','applying'));
+        UPDATE file_approvals SET error_code = CASE WHEN state = 'applying' THEN 'FILE_OUTCOME_UNKNOWN' ELSE 'PERMISSION_INTERRUPTED' END,
+          state = CASE WHEN state = 'applying' THEN 'unknown' ELSE 'cancelled' END WHERE state IN ('pending','approved','applying');`);
+    });
   }
 
   binding(sessionId: string) {

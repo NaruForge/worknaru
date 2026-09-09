@@ -53,9 +53,9 @@ export async function startDaemon(options: DaemonOptions) {
       // Query-only startup still prevents stale executions from appearing active.
       for (const session of store.recoverySessions()) store.recoverSession(session.sessionId, false);
     }
-    if (!runtime) store.recoverUndelivered();
+    if (!runtime) { store.recoverUndelivered(); store.recoverFiles(); }
   } catch (error) { store.close(); throw error; }
-  const methods = runtime ? [...METHODS, 'ai.get', 'settings.update', 'sessions.configure', 'runs.start', 'runs.cancel', 'runs.get', 'runs.watch', 'runs.unwatch'] : [...METHODS, 'runs.get', 'runs.watch', 'runs.unwatch'];
+  const methods = runtime ? [...METHODS, 'ai.get', 'settings.update', 'sessions.configure', 'runs.start', 'runs.cancel', 'runs.get', 'runs.watch', 'runs.unwatch', 'permissions.respond'] : [...METHODS, 'runs.get', 'runs.watch', 'runs.unwatch'];
   const instanceId = randomUUID();
   const token = Buffer.from(options.disableKeyAuth ? '' : options.token!);
   const server = createServer((_request, response) => {
@@ -159,6 +159,7 @@ export async function startDaemon(options: DaemonOptions) {
         }
         if (parsed.data.method === 'runs.unwatch') subscriptions.get(socket)?.delete(parsed.data.params.runId);
         send(socket, { type: 'response', callId: parsed.data.callId, ok: true, result });
+        if (parsed.data.method === 'permissions.respond') runtime!.respondPermission(parsed.data.params.runId, parsed.data.params.toolId);
         if (parsed.data.method === 'runs.start') runtime!.start((result as { run: Run }).run.runId);
         if (parsed.data.method === 'runs.cancel') {
           runtime!.emit(parsed.data.params.runId);
