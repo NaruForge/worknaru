@@ -4,7 +4,7 @@ import type { ChatStateStore } from '../src/chat-state.js';
 import { Chat, ConversationList } from './chat.js';
 import { Icon } from './icons.js';
 import { AiControls } from './ai-controls.js';
-import { developmentEndpoint, developmentKeyRequired, useDevServer } from './dev-server.js';
+import { defaultDaemonEndpoint, developmentEndpoint, developmentKeyRequired, useDevServer } from './dev-server.js';
 import { FilePreview, fileStateLabel } from './file-approval.js';
 
 function Dialog({ title, children, close, drawer = false }: { title: string; children: ReactNode; close: () => void; drawer?: boolean }) {
@@ -66,7 +66,7 @@ export function App({ model }: { model: ChatStateStore }) {
     const unseen = waiting.find(({ tool }) => !seenPermissions.current.has(tool.toolId));
     if (unseen && !permissionId && !connectionOpen && !settingsOpen) { seenPermissions.current.add(unseen.tool.toolId); setPermissionId(unseen.tool.toolId); }
   }, [waiting, permissionId, connectionOpen, settingsOpen]);
-  const [endpoint, setEndpoint] = useState(() => developmentEndpoint() ?? 'ws://127.0.0.1:4310/ws');
+  const [endpoint, setEndpoint] = useState(() => defaultDaemonEndpoint());
   const [tokenInput, setTokenInput] = useState('');
   const credentials = useRef({ endpoint: '', token: '' });
   const autoConnected = useRef(false);

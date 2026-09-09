@@ -6,7 +6,7 @@
 
 ## 지원하는 범위
 
-Daemon은 Session과 텍스트 메시지를 SQLite에 저장하고, 재시작 뒤 기록과 최초 접수 결과를 조회한다. 한 실행에서 명시한 Workspace 하나에 접근할 수 있다. Windows에서 `--acp`로 실행하면 아래의 실제 Codex 대화와 실행별 구독을 추가로 제공한다. 첫 Chat Web UI는 별도 로컬 개발 서버에서 같은 Daemon에 연결한다.
+Daemon은 Session과 텍스트 메시지를 SQLite에 저장하고, 재시작 뒤 기록과 최초 접수 결과를 조회한다. 한 실행에서 명시한 Workspace 하나에 접근할 수 있다. Windows에서 `--acp`로 실행하면 아래의 실제 Codex 대화와 실행별 구독을 추가로 제공한다. Chat Web UI는 별도 로컬 개발 서버 또는 독립 CLI의 `--web-ui`로 제공하며 같은 Daemon 계약에 연결한다.
 
 저장 연산은 `messages.append`다. `accepted: true`는 메시지와 접수 결과가 커밋됐다는 뜻이며 `aiExecution: false`를 함께 돌려준다. 저장한 메시지를 자동으로 AI에 보내지 않는다. 실제 AI 실행은 `--acp`가 활성화된 데몬의 `runs.start`로 요청한다.
 
@@ -96,6 +96,90 @@ npm start -- --data-dir .worknaru-dev --workspace .
 시작하면 접속 URL, Workspace ID, `storeEpoch`와 `daemonInstanceId`가 JSON 한 줄로 출력된다. 포트는 기본적으로 빈 포트를 선택하며 `--port 4317`처럼 지정할 수 있다. 토큰은 출력하지 않는다. 종료는 Ctrl+C다. 클라이언트가 연결을 닫아도 독립 Daemon은 유지된다.
 
 데이터 경로는 이 저장소 내부의 별도 디렉터리여야 한다. Workspace는 존재하는 폴더를 지정하며 해당 폴더에 데이터를 생성하지 않는다. 개발·시험 데이터와 npm 캐시는 Git에서 제외한다. 사용자용 설치·OS 데이터 경로·자격증명 저장은 아직 제공하지 않는다.
+
+## 독립 Daemon CLI
+
+관련 작업: [#26](https://github.com/NaruForge/worknaru/issues/26). 이 절은 일반 업무 WebSocket과 구분되는 로컬 실행·운영 계약이다. 현재 checkout의 `node dist/cli.js`를 사용한다. `package.json`의 `worknaru` bin은 같은 파일을 가리키며, 전역 설치·npm 배포·OS 서비스·백그라운드 상주는 제공하지 않는다.
+
+```powershell
+# UI 없는 빌드와 실행
+npm run build:daemon
+$env:WORKNARU_TOKEN = node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64url'))"
+node dist/cli.js daemon start --foreground --data-dir .worknaru-dev --workspace . --port 4310
+
+# 위 실행을 종료한 뒤, 번들 UI 및 AI 실행을 켜는 예
+npm run build
+node dist/cli.js daemon start --data-dir .worknaru-dev --workspace . --port 4310 --acp --codex-path (Get-Command codex.exe).Source --web-ui --open
+```
+
+`start`는 저장소 초기화·복구, listen, 요청한 UI의 산출물 검증과 운영 정보 준비가 끝난 뒤 stdout에 `daemon.ready` JSON 한 줄을 출력한다. `url`, `httpOrigin`, `workspace`, `storeEpoch`, `daemonInstanceId`, `webUi`, `aiExecution`을 포함한다. 준비 완료와 제공자 로그인·실제 모델 호출 성공은 별개다. 업무 접속키는 출력하지 않는다.
+
+### 명령과 대상
+
+| 명령/옵션 | 의미 |
+| --- | --- |
+| `daemon start` / `--foreground` | 터미널에 붙은 실행. `--background`는 오류다. |
+| `start --data-dir <dir> --workspace <folder>` | 두 값 모두 필수. data-dir은 checkout 안의 별도 디렉터리, Workspace는 기존 폴더다. 두 상대 경로 모두 cwd와 무관하게 CLI가 속한 checkout root 기준이다. |
+| `start --port <n>` | 기본 0: 사용 가능한 포트 배정. 명시한 1~65535 포트가 사용 중이면 실패하며 다른 프로세스를 종료하거나 다른 포트로 이동하지 않는다. |
+| `start --origin <url>` | 기존 정확한 로컬 Origin 허용 목록. 여러 번 지정할 수 있다. 번들 UI의 실제 origin은 자동으로 포함한다. wildcard나 외부 바인딩을 허용하지 않는다. |
+| `start --acp --codex-path <file>` | 기존 Codex ACP 실행을 켠다. codex-path는 acp와 함께 사용하며, 생략 시 기존 codex-acp의 실행 파일 탐색을 사용한다. |
+| `start --web-ui` | `dist/web`의 빌드 산출물을 Daemon의 HTTP origin에서 제공한다. Vite/빌드/설치를 자동 실행하지 않는다. 산출물 누락·부적합은 시작 실패다. |
+| `start --open` / `--no-open` | 기본은 브라우저를 열지 않음. open은 web-ui가 필요하며 두 옵션 동시 지정은 오류다. 브라우저 열기 실패는 경고와 URL을 남기고 준비된 Daemon을 유지한다. |
+| `daemon status --data-dir <dir> [--json]` | 실제 인스턴스의 응답을 확인한다. 없거나 잘못된 데이터 영역을 생성·수정하지 않는다. |
+| `daemon stop --data-dir <dir>` | 활성 Run·승인 대기가 없을 때 정상 종료한다. 작업이 있으면 거절한다. |
+| `daemon stop --data-dir <dir> --cancel-active` | 활성 Run·승인 대기를 중단하고 정상 종료한다. 승인 자동 허용·이미 적용한 파일 변경 원복·기록 삭제는 하지 않는다. |
+| `--help` / `--version` | 실행·인증·데이터 변경 없이 도움말 또는 package version을 출력한다. |
+
+같은 데이터 영역에서는 기존 SQLite 소유권 잠금을 얻은 하나의 Daemon만 실행한다. 새 CLI는 잠금 획득 후, 저장된 Workspace가 요청한 폴더와 다른지 검사하고 `WORKSPACE_CONFLICT`로 거절한다. 다른 Workspace로 조용히 연결하거나 기존 데이터를 이동하지 않는다. 기존 `npm start`/`startDaemon()`의 과거 여러 Workspace 조회·저장 의미는 변경하지 않았다. 그런 데이터 영역에 여러 Workspace가 있으면 새 CLI는 거절하며 별도 데이터 영역을 지정해야 한다.
+
+### 인증과 종료 수명
+
+업무 WebSocket은 기존 `WORKNARU_TOKEN` 인증을 유지한다. 번들 화면은 같은 origin의 `/ws`를 기본 주소로 표시하고 사용자가 키를 입력한다. 키는 화면 메모리에만 두며 URL·HTML·브라우저 저장소에 넣지 않는다. 새로고침 뒤에는 다시 입력한다. 번들 UI에는 개발 서버 종료 버튼이 없다. `npm run dev`의 선택적 키 인증과 개발 종료·Hub 동작은 그대로다.
+
+운영 제어는 `ops.token`의 별도 무작위 키를 사용한다. 이 파일은 해당 instance ID와 키를 담고, Windows에서는 **내용을 쓰기 전에 현재 사용자만 허용하는 DACL**을 적용한다. 다른 플랫폼에서는 0600으로 만든다. 일반 발견 정보 `runtime.json`에는 키가 없다. 상태·종료 명령은 먼저 일회성 challenge에 대한 HMAC 응답으로 상대가 해당 운영 키를 가지고 있는지 확인하고, data-dir·instance ID·앱/계약 버전을 대조한 뒤 운영 요청을 보낸다. 발견 정보와 키의 인스턴스가 달라진 경우 다시 조회해야 한다. 원본 `WORKNARU_TOKEN`은 운영 요청에 사용하지 않는다.
+
+제어 경로는 같은 loopback 서버의 `/__worknaru_ops/identify`(GET), `/status`(GET), `/stop`(POST)다. `/status`, `/stop`은 해당 접두 경로 아래에 있다. 정확한 Host를 요구하며 **Origin이 있는 운영 요청은 모두 거절**한다. 상태·종료는 Bearer 운영 키와 `X-WorkNaru-Instance`를 확인한다. `--cancel-active`는 `X-WorkNaru-Cancel-Active: yes`로 전달한다. 이 경로는 일반 업무 capability에 포함하지 않는다. 동일 OS 사용자나 관리자에 대한 격리는 제공하지 않는다. 실제 Windows 시험은 토큰 파일 DACL과 잘못된 키·Host·Origin·인스턴스 거절을 확인하며, 별도 OS 사용자로 가장해 접근하는 시험은 포함하지 않는다.
+
+종료는 활성 실행을 확인하고 같은 동기 구간에서 새 업무 접수를 막는다. 이어 새 TCP/HTTP 접수를 중지하고, 소유 ACP·연결·저장소를 정리한다. 운영 파일 정리는 SQLite 소유권을 놓기 전에 해당 인스턴스 파일에만 수행한다. stop 응답 연결 하나는 완료 본문을 보낼 때까지 남긴다. 키·소켓·저장 정리가 확인된 경우에만 해당 instance ID의 `stopped: true`를 반환한다. 응답 유실·timeout·저장/프로세스 정리 실패를 성공으로 추정하지 않는다.
+
+Foreground Ctrl+C/SIGTERM은 활성 작업 중단을 포함한 같은 정리 경로를 사용한다. 탭 닫기·새로고침·RPC 클라이언트 종료는 Daemon이나 접수된 Run을 종료하지 않는다. 정상 종료와 비정상 종료 후에도 기존 기록·설정·접수 장부를 보존하며, 다음 시작은 기존 복구 정책을 따른다. 미확정 실행을 재전송하거나 파일을 자동 원복하지 않는다.
+
+### 출력·오류·복구
+
+`status --json` 성공은 stdout에 `daemon.status` 한 줄을 출력하며 `running`, `instanceId`, `dataDir`, `workspace`, `port`, `url`, `httpOrigin`, `protocolMajor`, `appVersion`, `webUi`, `aiExecution`, `activeRuns`, `pendingApprovals`를 포함한다. 기본 status는 사람이 읽는 텍스트다. stop 성공은 stdout의 `daemon.stopped` JSON이다. 모든 오류는 stderr의 `cli.error` 한 줄(`code`, `message`, busy일 때 실행·승인 개수)과 아래 종료 코드를 사용한다. `cli.warning`은 브라우저 열기 실패 같은 비치명적 안내이며 Daemon은 유지한다.
+
+| 종료 코드 | 의미와 대표 오류 |
+| --- | --- |
+| 0 | 도움말/버전·조회·확인된 정상 종료 성공 |
+| 1 | 일반 기동/저장 오류: `DATA_IN_USE`, `PORT_IN_USE`, `WORKSPACE_CONFLICT`, `WEB_UI_UNAVAILABLE` 등 |
+| 2 | 사용법·설정 오류: `USAGE`, `INVALID_PORT`, `INVALID_ORIGIN`, `INVALID_DATA_PATH`, `INVALID_WORKSPACE`, `INVALID_AUTH_CONFIG` |
+| 3 | 데이터 영역 또는 발견 정보 부재: `DATA_NOT_FOUND`, `NOT_RUNNING` |
+| 4 | 실제 응답 없음·중단·시간 초과: `NO_RESPONSE`. 생존/종료 결과를 확정하지 않는다. |
+| 5 | 운영 키·서버 인증 실패: `AUTH_FAILED`, `INVALID_OPS_TOKEN` |
+| 6 | 인스턴스/버전/경로 불일치 또는 손상·링크된 발견 정보: `TARGET_MISMATCH`, `INVALID_DISCOVERY` |
+| 7 | 활성 실행/승인 대기로 종료 거절: `DAEMON_BUSY` |
+| 8 | 정리 실패 또는 유효한 완료 응답 없음: `STOP_UNCONFIRMED` |
+
+신원 확인은 총 3초, status는 그 뒤 총 5초, stop은 그 뒤 총 180초가 한도다. 데이터를 조금씩 받더라도 전체 기한은 늘어나지 않는다. 네트워크 응답은 16KiB로 제한한다. 중간 연결 단절이나 잘못된 JSON은 비영 코드로 끝난다. CLI의 stop 대기 기한 초과는 서버에 재전송·강제 kill을 지시하는 동작이 아니다.
+
+```powershell
+# 다른 터미널: 업무 키를 복사하지 않아도 같은 사용자의 운영 파일로 확인한다.
+node dist/cli.js daemon status --data-dir .worknaru-dev --json
+$LASTEXITCODE
+node dist/cli.js daemon stop --data-dir .worknaru-dev
+# busy일 때 영향을 확인하고 명시적으로 중단한다.
+node dist/cli.js daemon stop --data-dir .worknaru-dev --cancel-active
+```
+
+`NOT_RUNNING`은 이 CLI의 발견 정보가 없다는 뜻이다. 운영 메타데이터를 만들지 않는 기존 `npm start`/`npm run dev`로 실행한 Daemon은 관리 대상이 아니며, 그 실행의 기존 종료 방법을 사용한다. 발견 정보가 있어도 실제 응답이 없으면 오래된 것으로 확정해 삭제하거나 PID·포트로 다른 프로세스를 종료하지 않는다. 기존 foreground 터미널과 명시한 데이터 경로를 확인한다. 재시작은 소유권 잠금을 다시 획득한 실행만 운영 정보를 갱신하며, 기존 인스턴스가 살아 있으면 거절한다. 손상된 업무 DB를 삭제하거나 접수된 요청을 새 요청으로 반복해서 보내지 않는다.
+
+정적 제공은 검증된 `dist/web` 안의 파일로 제한한다. 잘못된 index/참조 산출물, 경로 이탈·링크/hard link, 잘못된 Host·Origin, 제어 경로와의 충돌을 거절한다. API 오류를 index.html로 대체하는 SPA fallback은 제공하지 않는다. HTML/asset은 no-store로 제공하며 런타임에 Web 빌드가 없으면 요청한 UI 실행만 실패한다.
+
+### 검증
+
+`test:daemon`은 Web 빌드 없이 CLI 시험을 포함한다. 별도 Daemon-only checkout fixture에서도 CLI 기동·공개 RPC 저장·종료와 UI 누락 오류를 확인한다. `npm test`는 기존 개발 실행 검사와 정적 번들 검사를 포함한다. `test:web`는 기존 화면 시험과 실제 별도 CLI 프로세스의 번들 UI 인증·채팅·재접속·탭 종료 후 무접속 실행 완료를 검증한다.
+
+CLI 시험은 실제 SQLite·가짜 ACP와 별도 프로세스를 사용한다. 저장 실패 시 종료 실패 보고·하위 프로세스 정리, 실제 승인 대기 거절, 두 start의 소유권 경쟁, 운영 파일 접근 제한, 위조/손상/오래된 발견 정보와 응답 유실을 확인한다. Windows의 SIGINT 시험은 시험 전용 IPC wrapper에서 실제 SIGINT handler를 호출한다. 실제 콘솔 키 입력·로그오프·재부팅 후 수명을 검증했다고 주장하지 않는다. 실제 유료 모델이나 실제 Hub lease는 사용하지 않는다.
 
 ## 접속과 호출 예
 

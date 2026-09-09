@@ -10,7 +10,7 @@ mkdirSync(temporary, { recursive: true });
 process.env.TEMP = temporary;
 process.env.TMP = temporary;
 export default defineConfig({
-  testDir: 'tests', testMatch: 'web.spec.mjs', workers: 1, timeout: 45_000,
+  testDir: 'tests', testMatch: '*.spec.mjs', workers: 1, timeout: 45_000,
   outputDir: '.worknaru-test/browser-output', reporter: 'list',
   use: { channel: 'msedge', headless: true, viewport: { width: 1280, height: 900 },
     launchOptions: { env: { ...process.env, TEMP: temporary, TMP: temporary } },

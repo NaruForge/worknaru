@@ -60,6 +60,31 @@ npm start -- --data-dir .worknaru-dev --workspace . --port 4310
 
 독립 Daemon은 실행한 터미널에서 `Ctrl+C`로 종료합니다. 호출 도구의 `Ctrl+C`, 탭 닫기와 연결 종료는 해당 클라이언트만 닫습니다. 통합 개발 실행의 **개발 서버 종료**는 실행기가 소유한 Daemon·UI를 함께 정리하는 별도 운영 기능입니다.
 
+### 독립 Daemon CLI
+
+개발 실행과 별도로, 빌드된 Daemon을 시작·조회·종료하는 로컬 CLI를 제공합니다. 다음 명령은 이 checkout 안에서 실행합니다.
+
+```powershell
+npm run build
+$env:WORKNARU_TOKEN = node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64url'))"
+node dist/cli.js daemon start --data-dir .worknaru-dev --workspace . --port 4310 --web-ui
+```
+
+출력된 HTTP 주소를 열고 같은 터미널의 `$env:WORKNARU_TOKEN` 값을 연결 창에 입력합니다. 실제 AI 실행에는 시작 명령에 `--acp --codex-path (Get-Command codex.exe).Source`를 추가합니다. `--web-ui`만으로 AI를 활성화하지 않습니다. UI 없이 실행하려면 `npm run build:daemon`으로 빌드하고 `--web-ui`를 생략합니다.
+
+별도 터미널에서 같은 데이터 영역을 조회하거나 종료합니다. 이 운영 명령은 해당 데이터 영역의 별도 자격증명을 사용하므로 업무 접속키를 다른 터미널에 복사할 필요가 없습니다.
+
+```powershell
+node dist/cli.js daemon status --data-dir .worknaru-dev --json
+node dist/cli.js daemon stop --data-dir .worknaru-dev
+# 실행·승인 대기를 명시적으로 중단하고 종료할 때
+node dist/cli.js daemon stop --data-dir .worknaru-dev --cancel-active
+```
+
+기본 실행은 foreground이며 브라우저를 자동으로 열지 않습니다. `--open`을 추가하면 브라우저를 열고, 탭을 닫아도 Daemon과 접수된 실행은 유지합니다. 기본 `stop`은 활성 작업이 있으면 거절합니다. Ctrl+C는 작업 중단을 포함한 종료입니다. 기록과 설정은 보존합니다.
+
+`worknaru` bin을 선언했지만 전역 설치·백그라운드 서비스·배포 패키지를 제공하는 단계는 아닙니다. 현재 지원하는 진입점은 위의 로컬 Node 명령입니다. 기존 `npm start`와 `npm run dev`도 유지합니다. [CLI 옵션과 운영·복구 계약](docs/development.md#독립-daemon-cli)을 참고하세요.
+
 ## 플랫폼과 Module
 
 WorkNaru는 공통 작업 환경과 실행 기반을 제공하는 **플랫폼**과 실제 업무 서비스를 제공하는 **Module**로 구성됩니다. 이 절에서 제품의 핵심 개념과 책임 경계를 정의합니다. 선택의 근거와 영향은 [ADR-0006](docs/adr/0006-define-modules-as-business-services.md)에 기록합니다.

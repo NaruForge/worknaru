@@ -12,6 +12,11 @@ export function developmentEndpoint() {
   return value;
 }
 
+export function defaultDaemonEndpoint() {
+  const bundled = document.querySelector<HTMLMetaElement>('meta[name="worknaru-daemon-ws"]')?.content;
+  return developmentEndpoint() ?? bundled ?? 'ws://127.0.0.1:4310/ws';
+}
+
 export function developmentKeyRequired() {
   return document.querySelector<HTMLMetaElement>('meta[name="worknaru-dev-auth"]')?.content !== 'none';
 }

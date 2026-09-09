@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import { createServer } from 'node:net';
 import { request as httpRequest } from 'node:http';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { WebClient } from '../dist/web-client.js';
@@ -178,7 +178,16 @@ test('shutdown checks all runs, rechecks after status, and cleans an active ACP 
   await stopped.json();
   assert.equal(await deadline(server.stopped), true);
   const pids = readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse).filter((item) => ['spawn', 'descendant'].includes(item.type)).map((item) => item.pid);
-  for (const pid of pids) assert.throws(() => process.kill(pid, 0), /ESRCH/);
+  for (const pid of pids) {
+    try { assert.throws(() => process.kill(pid, 0), /ESRCH/); }
+    catch (error) {
+      const current = execFileSync('pwsh.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+        'Get-Process -Id $env:WORKNARU_TEST_PID -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,StartTime | ConvertTo-Json -Compress'],
+      { windowsHide: true, encoding: 'utf8', env: { ...process.env, WORKNARU_TEST_PID: String(pid) } });
+      error.message += `; expected retired PID ${pid}; current process: ${current.trim() || 'already exited'}`;
+      throw error;
+    }
+  }
   const restarted = await start(f);
   const reader = await connect(f, restarted.daemon);
   assert.equal((await reader.call('runs.get', { runId: run.result.run.runId })).result.state, 'cancelled');
