@@ -19,6 +19,42 @@ npm run test:live:paseo
 
 실검증은 `.worknaru-test/paseo-live-<uuid>`의 임시 Workspace·새 데이터만 사용한다. 첫 응답·후속 응답·취소 총 3회이며 각 입력의 native turn 시작·종료 식별자를 확인한다. `idle` 또는 timeout을 성공/취소 증거로 쓰지 않는다. 2026-09-09 Windows `10.0.26200`, Node `24.18.0`, npm `11.14.1`, Codex CLI `0.153.4`에서 통과했다. 해당 환경의 executable은 `C:\Users\swBaek\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe`였다. 전용 runtime 종료와 개인 Paseo/Codex 설정·인증의 SHA-256 무변경을 함께 확인했다. Paseo/외부 Codex 버전 변경 시 이 시험과 뒤이어 제공하는 제품 흐름을 재검증한다.
 
+## 새 Chat 흐름 검증
+
+전환 중에는 `npm run build` 후 `npm run start:paseo -- --web-ui`로 실행하고 `http://127.0.0.1:4310/paseo.html`을 연다. `--data-dir` 기본값은 `.worknaru-dev/paseo-v1`, `--workspace`는 저장소 루트다. `--codex-path` → `WORKNARU_CODEX_PATH` → PATH의 `codex.exe` 순으로 executable을 선택한다. `--port`는 제품 포트이며 `0`은 빈 포트를 배정한다. 다른 loopback UI 출처는 `--origin http://127.0.0.1:15173`처럼 명시한다. 종료는 실행 터미널의 `Ctrl+C`다. 탭을 닫아도 실행은 유지된다.
+
+새 화면은 대화 목록, 첫/후속 입력, 응답·도구 기록, Chat 안의 Model/Reasoning Effort 선택, 권한 1회 허용·거절과 취소를 제공한다. 지원하지 않는 권한 양식은 허용할 수 없다. 영구 허용·Settings·기존 파일 diff 승인은 이 경로에 없다. 모델 변경은 유휴 상태에서 실제 적용을 확인하며, 부분 실패나 결과 불명 상태에서는 입력을 막는다.
+
+UI와 headless는 `/ws`의 **protocol 2**를 함께 쓴다. 최초 프레임은 `{"type":"hello","version":2}`, 이후 요청은 `{"type":"call","id":"request-id","method":"runtime.get","params":{}}`다. 성공 응답은 `reply`의 `ok: true / result`, 실패는 `ok: false / error.code / error.message`다. 연결된 client는 `changed` 알림을 받으면 상태·기록을 다시 조회하며 `message.finished`의 입력 식별자와 완료 결과를 확인한다. 구형 hello와 임의 Origin/Host는 거절한다. Paseo 객체·주소·인증은 공개 계약에 포함하지 않는다.
+
+| 요청 | params |
+| --- | --- |
+| `runtime.get`, `models.list`, `chats.list` | `{}` |
+| `chats.create` | `{id: UUID, title, selection: {model, effort}}` |
+| `chats.recover`, `chats.get`, `chats.watch` | `{chatId: UUID}` |
+| `chats.timeline` | `{chatId, before?: 이전 응답의 before}` |
+| `chats.configure` | `{chatId, selection: {model, effort}}` |
+| `messages.send` | `{chatId, messageId: UUID, text}` |
+| `messages.cancel` | `{chatId}` |
+| `permissions.respond` | `{chatId, permissionId, decision: "allow" 또는 "deny"}` |
+
+PowerShell JSON 인용을 피하려면 프로젝트 안의 JSON 파일에 `method`와 `params`를 기록하고 `npm run rpc:paseo -- --file .worknaru-test/request.json`을 사용한다. `--url` 기본값은 `ws://127.0.0.1:4310/ws`, `--watch`는 응답 후 같은 연결에서 이벤트를 출력한다. 인자 없는 호출은 `runtime.get`이다. 대화 생성 뒤 반환된 ID를 사용해 별도의 `messages.send`를 호출한다. 각 생성 ID와 입력 ID는 UUID이며 새 요청마다 한 번 생성하고 응답을 잃어도 바꾸어 재전송하지 않는다.
+
+WorkNaru SQLite는 대화와 Agent의 연결, 안정적인 생성 요청, 미확정 입력·설정·권한 처리 식별 정보만 보관한다. native 세션과 timeline은 Paseo가 보관한다. 생성 응답·연결 저장 실패는 `chats.recover`에서 같은 생성 식별자로 확인한다. 전달 결과 불명은 자동 재전송하지 않으며 재접속·재시작 후 상태와 기록을 조회한다. native `idle`이나 마지막 답변만으로 성공을 확정하지 않으므로 종료 이벤트를 놓친 입력은 `unknown`을 유지한다. 기록을 확인하고 필요한 경우 새 대화에서 이어간다. 완료가 확인된 새 대화는 제품 재시작 뒤 후속 입력을 받을 수 있다.
+
+```powershell
+npm run build
+node --test tests/chat-service.test.mjs tests/chat-daemon.test.mjs
+npx playwright test tests/paseo-web.spec.mjs
+$env:WORKNARU_LIVE = '1'
+$env:WORKNARU_CODEX_PATH = (Get-Command codex.exe).Source
+node --test tests/chat-product-live.mjs
+```
+
+fake 시험은 실제 SQLite 저장 실패, 생성/전달/승인 응답 유실, 동시 입력·승인, 부분 모델 설정, 재접속과 재시작을 검사한다. 브라우저 시험은 데스크톱·모바일, 초안, 모델 설정, 권한, 취소와 headless 공통 계약을 검사한다. 제품 실검증은 임시 Workspace에서 파일 읽기 도구, headless 후속 입력, UI 권한 허용·거절, 새 기록 재시작과 UI 취소를 사용하며 매 입력에 `gpt-5.6-luna / low` 확인을 강제한다. 해당 Windows 환경에서는 읽기 명령도 추가 권한을 요청할 수 있다.
+
+2026-09-09 위 환경에서 제품 실검증 5회 입력이 통과했다. 권한 허용은 지정 파일 생성, 거절은 기존 파일 무변경으로 확인했으며 새 서버에서 기록 복원과 후속 입력, 취소의 native 완료 이벤트를 확인했다. 재시작 때 Paseo의 저장된 `closed` snapshot은 lazy load 전 상태이므로 연결부가 native 기록 조회로 복구하고 실제 snapshot을 다시 확인한다. 이를 완료 또는 입력 가능으로 바로 해석하지 않는다.
+
 ## 기존 기본 실행 경로
 
 이 문서는 현재 실행 가능한 ACP 구현의 명령과 동작을 설명한다. [ADR-0016](adr/0016-use-paseo-for-agent-management.md)의 Paseo 채택 결정은 [Migration #35](https://github.com/NaruForge/worknaru/issues/35)에서 적용하며, 분석·결정 문서 병합만으로 아래 명령·계약·데이터 형식이 바뀌지는 않는다. 이행 중 변경한 계약은 관련 동작 시험과 이 안내를 함께 갱신한다.

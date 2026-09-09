@@ -12,5 +12,5 @@ export default defineConfig({
     },
   },
   preview: { host: '127.0.0.1', port: 5173, strictPort: true },
-  build: { outDir: '../dist/web', emptyOutDir: true },
+  build: { outDir: '../dist/web', emptyOutDir: true, rollupOptions: { input: { main: resolve('web/index.html'), paseo: resolve('web/paseo.html') } } },
 });
