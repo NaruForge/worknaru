@@ -2,17 +2,13 @@
 import { z } from 'zod';
 import { aiInfoSchema, aiSettingsSchema } from './ai-settings.js';
 import type { AiSelection } from './ai-settings.js';
-import { fileApprovalSchema } from './file-approval.js';
+import { runSchema } from './public-contract.js';
+import type { Run } from './public-contract.js';
+export { runSchema } from './public-contract.js';
+export type { Run } from './public-contract.js';
 
 const id = z.uuid();
 const seq = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-export const runSchema = z.object({
-  runId: id, sessionId: id, state: z.enum(['running', 'cancelling', 'completed', 'cancelled', 'failed']),
-  delivery: z.enum(['not_attempted', 'attempting']), revision: seq, text: z.string(),
-  errorCode: z.string().nullable(), stopReason: z.string().nullable(), createdAt: z.string(), storageAvailable: z.boolean(),
-  model: z.string().nullable().default(null), reasoningEffort: z.string().nullable().default(null), modelConfirmed: z.number().int().min(0).max(1).default(0),
-  tools: z.array(fileApprovalSchema).max(4).default([]),
-});
 const sessionSchema = z.object({
   sessionId: id, workspaceId: id, title: z.string(), seq, createdAt: z.string(),
   aiUnavailable: z.number().int().min(0).max(1), latestRunId: id.nullable(),
@@ -59,7 +55,6 @@ type Params = {
   'runs.get': { runId: string }; 'runs.watch': { runId: string }; 'runs.unwatch': { runId: string };
   'requests.get': { workspaceId: string; requestId: string; storeEpoch: string };
 };
-export type Run = z.infer<typeof runSchema>;
 export type Session = z.infer<typeof sessionSchema>;
 export type Message = z.infer<typeof messageSchema>;
 export type Workspace = z.infer<typeof workspaceSchema>;

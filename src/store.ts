@@ -7,6 +7,8 @@ import type { Mutation, Request } from './protocol.js';
 import { validateDataFiles, workspacePath } from './paths.js';
 import { INITIAL_AI_SELECTION } from './ai-settings.js';
 import type { AiSelection } from './ai-settings.js';
+import type { Run } from './public-contract.js';
+export type { Run } from './public-contract.js';
 import type { FileApproval } from './file-approval.js';
 
 const APPLICATION_ID = 0x574e4152;
@@ -15,7 +17,6 @@ const MODULE = 'chat';
 
 type Workspace = { workspaceId: string; path: string };
 type Session = { sessionId: string; workspaceId: string; title: string; seq: number; createdAt: string; aiUnavailable: number; latestRunId: string | null; latestRunState: Run['state'] | null; storageAvailable: boolean; model: string | null; reasoningEffort: string | null };
-export type Run = { runId: string; sessionId: string; state: 'running' | 'cancelling' | 'completed' | 'cancelled' | 'failed'; delivery: 'not_attempted' | 'attempting'; revision: number; text: string; errorCode: string | null; stopReason: string | null; createdAt: string; storageAvailable: boolean; model: string | null; reasoningEffort: string | null; modelConfirmed: number; tools: FileApproval[] };
 
 const RUN_SELECT = `SELECT r.id AS runId, r.session_id AS sessionId, r.state, r.delivery, r.revision, m.text, r.error_code AS errorCode, r.stop_reason AS stopReason, r.created_at AS createdAt, r.ai_model AS model, r.ai_effort AS reasoningEffort, r.model_confirmed AS modelConfirmed FROM runs r JOIN messages m ON m.run_id = r.id AND m.role = 'assistant'`;
 const SESSION_SELECT = `SELECT s.id AS sessionId, s.workspace_id AS workspaceId, s.title, s.seq, s.created_at AS createdAt,
