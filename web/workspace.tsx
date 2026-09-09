@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { ChatStateStore } from '../src/chat-state.js';
 import { Chat, ConversationList } from './chat.js';
 import type { TranscriptPosition } from './chat.js';
@@ -75,18 +75,15 @@ export function App({ model, appearance }: { model: ChatStateStore; appearance: 
     {state.error && <p className="error-text" role="alert">{state.error}</p>}
   </div>;
   const list = <>{settingsOpen ? <SettingsNavigation selected={settingsSection} select={navigation.openSettings} /> : <ConversationList state={state} model={model} select={navigation.openSession} create={() => void createSession()} scrollPosition={chatListScroll} visible={wide || navigation.route.view === 'list'} />}{listStatus}</>;
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (wide) return;
-    const frame = requestAnimationFrame(() => {
-      if (document.querySelector('dialog[open]')) return;
-      const selector = navigation.route.view === 'modules' ? '.module-picker h1' : navigation.route.view === 'list' ? '.stacked-list [aria-current], .stacked-list .ui-button' : '.stacked-toolbar .ui-button';
-      document.querySelector<HTMLElement>(selector)?.focus();
-    });
-    return () => cancelAnimationFrame(frame);
+    if (document.querySelector('dialog[open]')) return;
+    const selector = navigation.route.view === 'modules' ? '.module-picker h1' : navigation.route.view === 'list' ? '.stacked-list [aria-current], .stacked-list .ui-button' : '.stacked-toolbar .ui-button';
+    document.querySelector<HTMLElement>(selector)?.focus();
   }, [wide, navigation.route.module, navigation.route.view]);
   const refreshSettings = () => { void model.refreshSettings(); void model.refreshAi(); };
   const workspaceName = state.workspace?.path.split(/[\\/]/).filter(Boolean).at(-1) ?? 'Workspace';
-  const devStop = dev.enabled && <Button className="dev-stop" onClick={() => void dev.check()} disabled={dev.stage !== 'idle'}>개발 서버 종료</Button>;
+  const devStop = dev.enabled && <Button density="compact" variant="outline" className="dev-stop" onClick={() => void dev.check()} disabled={dev.stage !== 'idle'}>개발 서버 종료</Button>;
   if (dev.stage === 'stopped') return <main className="dev-stopped"><span className="mark">w</span><h1>종료되었습니다.</h1><p>대화와 설정은 보존했습니다. 이 탭을 닫아도 됩니다.</p><p className="muted">다시 시작하려면 프로젝트 폴더에서 npm run dev를 실행하세요.</p></main>;
   return <>
     <WorkspaceShell sidebarLabel={settingsOpen ? '설정 메뉴' : '대화 목록'} name={workspaceName} online={state.connection === 'online'} sidebar={wide && expanded[navigation.route.module] ? list : undefined}
@@ -100,8 +97,8 @@ export function App({ model, appearance }: { model: ChatStateStore; appearance: 
       <div className="settings-content">
         {settingsSection === 'appearance' && <AppearanceSettings preference={appearance} />}
         {settingsSection === 'connection' && <section><h2>Workspace 연결</h2><p className="muted small">{state.connection === 'online' ? '연결됨' : '연결 끊김'} · {state.endpoint || endpoint}</p>
-          <Button variant="outline" className="settings-action" onClick={() => setConnectionOpen(true)}>연결 설정 변경</Button></section>}
-        {settingsSection === 'ai' && <><section><div className="settings-section-heading"><h2>AI 인증</h2><Button variant="outline" className="settings-action" disabled={state.connection !== 'online' || state.busy || !!state.pending || state.aiLoading || state.settingsLoading} onClick={refreshSettings}>{state.aiLoading || state.settingsLoading ? '확인 중…' : '상태 새로고침'}</Button></div>
+          <Button density="compact" variant="outline" className="settings-action" onClick={() => setConnectionOpen(true)}>연결 설정 변경</Button></section>}
+        {settingsSection === 'ai' && <><section><div className="settings-section-heading"><h2>AI 인증</h2><Button density="compact" variant="outline" className="settings-action" disabled={state.connection !== 'online' || state.busy || !!state.pending || state.aiLoading || state.settingsLoading} onClick={refreshSettings}>{state.aiLoading || state.settingsLoading ? '확인 중…' : '상태 새로고침'}</Button></div>
           <p className="auth-status">{!state.ready?.aiExecution ? 'AI 연결 비활성' : state.aiLoading ? '인증 상태 확인 중…' : state.aiInfo ? ({ chatgpt: 'ChatGPT 로그인 정보 확인됨', apiKey: 'API 키 인증 정보 확인됨', other: '제공자 인증 정보 확인됨', signedOut: '로그인 정보 없음' })[state.aiInfo.authentication] : '인증 상태 확인 필요'}</p>
           <p className="muted small">기존 Codex CLI 로그인 정보를 사용합니다. WorkNaru 연결 키와 별개의 인증입니다.</p>
           {state.aiInfo?.authentication === 'signedOut' && <p className="muted small">Codex CLI에서 로그인한 뒤 Daemon을 다시 실행하세요.</p>}
@@ -112,7 +109,7 @@ export function App({ model, appearance }: { model: ChatStateStore; appearance: 
           {state.settingsError && <p className="error-text small" role="alert">{state.settingsError}</p>}
         </section>
         <section><h2>파일 수정 권한</h2><p className="muted small">{state.ready?.capabilities.includes('permissions.respond') ? 'Workspace 텍스트 파일 수정 · 요청마다 변경 내용을 확인하고 허용 또는 거절합니다.' : '텍스트 대화 · 도구 실행 미지원'}</p></section></>}
-        {state.pending && <p role="status">{state.busy ? '접수 확인 중…' : '접수 여부 확인이 필요합니다.'}{!state.busy && <Button variant="outline" className="settings-action" onClick={() => void model.resolvePending()}>접수 확인</Button>}</p>}
+        {state.pending && <p role="status">{state.busy ? '접수 확인 중…' : '접수 여부 확인이 필요합니다.'}{!state.busy && <Button density="compact" variant="outline" className="settings-action" onClick={() => void model.resolvePending()}>접수 확인</Button>}</p>}
         {state.error && <p className="error-text small" role="alert">{state.error}</p>}
       </div>
     </MainPanel> : <Chat state={state} model={model} scrollPosition={transcriptPosition} reconnect={reconnect} create={() => void createSession()} visible={wide || navigation.route.view === 'main'} approvals={displayedPermissions.map(permission => <FileApprovalPanel key={permission.tool.toolId} tool={permission.tool} open={permissionId === permission.tool.toolId} context={state.sessions.find(session => session.sessionId === permission.run.sessionId)?.title} onToggle={open => setPermissionId(current => open ? permission.tool.toolId : current === permission.tool.toolId ? undefined : current)}><div className="permission-content">

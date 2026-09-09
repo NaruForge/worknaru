@@ -13,6 +13,7 @@ export default defineConfig({
   testDir: 'tests', testMatch: '*.spec.mjs', workers: 1, timeout: 45_000,
   outputDir: '.worknaru-test/browser-output', reporter: 'list',
   use: { channel: 'msedge', headless: true, viewport: { width: 1280, height: 900 },
+    deviceScaleFactor: 1, locale: 'ko-KR', timezoneId: 'Asia/Seoul', colorScheme: 'light', reducedMotion: 'reduce',
     launchOptions: { env: { ...process.env, TEMP: temporary, TMP: temporary } },
     screenshot: 'only-on-failure',
   },
