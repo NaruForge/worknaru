@@ -3,6 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "worknaru": "dist/cli.js"
+  },
   "engines": {
     "node": ">=24.18.0 <25"
   },
@@ -22,7 +25,7 @@
     "test:files:live": "npm run build && node --test tests/files-live.mjs",
     "build:daemon": "tsc",
     "rpc": "node dist/rpc-client.js",
-    "test:daemon": "npm run build:daemon && node --test tests/daemon.test.mjs tests/acp.test.mjs tests/settings.test.mjs tests/file-tools.test.mjs tests/web-client.test.mjs tests/rpc-client.test.mjs"
+    "test:daemon": "npm run build:daemon && node --test tests/daemon.test.mjs tests/acp.test.mjs tests/settings.test.mjs tests/file-tools.test.mjs tests/web-client.test.mjs tests/rpc-client.test.mjs tests/cli.test.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/codex-acp": "1.10.0",

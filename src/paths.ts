@@ -2,8 +2,25 @@ import { lstatSync, mkdirSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 import { AppError } from './protocol.js';
 
+export function checkoutRoot(fromModuleUrl: string) {
+  return realpathSync(new URL('../', fromModuleUrl));
+}
+
+export function resolveWorkspaceDirectory(projectRoot: string, directory: string) {
+  try { return workspacePath(resolve(realpathSync(projectRoot), directory)); }
+  catch { throw new AppError('INVALID_WORKSPACE', 'Workspace는 접근 가능한 기존 폴더여야 합니다.'); }
+}
+
 // Development data stays in this checkout. No automatic user-profile writes.
 export function prepareDataDirectory(projectRoot: string, directory: string) {
+  return resolveDataDirectory(projectRoot, directory, true);
+}
+
+export function resolveExistingDataDirectory(projectRoot: string, directory: string) {
+  return resolveDataDirectory(projectRoot, directory, false);
+}
+
+function resolveDataDirectory(projectRoot: string, directory: string, create: boolean) {
   const root = realpathSync(projectRoot);
   const target = resolve(root, directory);
   const part = relative(root, target);
@@ -20,10 +37,19 @@ export function prepareDataDirectory(projectRoot: string, directory: string) {
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      if (!create) throw new AppError('DATA_NOT_FOUND', '지정한 데이터 영역이 없습니다.');
       mkdirSync(cursor, { mode: 0o700 });
     }
   }
   return realpathSync(target);
+}
+
+export function assertUnlinkedFile(path: string, message = '데이터 파일의 링크나 파일 형식이 올바르지 않습니다.') {
+  const stat = lstatSync(path);
+  if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink > 1) {
+    throw new AppError('INVALID_DATA_PATH', message);
+  }
+  return stat;
 }
 
 export function validateDataFiles(directory: string) {

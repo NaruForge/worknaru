@@ -1,6 +1,7 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AddressInfo, Socket } from 'node:net';
 import { WebSocket, WebSocketServer } from 'ws';
 import { AppError, helloSchema, MAX_MESSAGE_BYTES, MAX_TEXT_BYTES, PROTOCOL_MAJOR, publicError, requestSchema } from './protocol.js';
@@ -9,6 +10,8 @@ import { RecordStore } from './store.js';
 import type { Run } from './store.js';
 import { AcpRuntime } from './acp.js';
 import type { AcpOptions } from './acp.js';
+import { APP_VERSION, createOpsToken, identityProof, isOpsPath, opsPath, removeOwnedRuntimeState, writeRuntimeState } from './runtime-state.js';
+import { resolveWebRoot, serveWebAsset } from './static-ui.js';
 
 const MAX_CLIENTS = 16;
 const MAX_OUTPUT_BYTES = 256 * 1024;
@@ -24,6 +27,9 @@ export type DaemonOptions = {
   port?: number;
   origins?: string[];
   acp?: AcpOptions;
+  ops?: boolean;
+  exclusiveWorkspace?: boolean;
+  webUi?: boolean;
 };
 
 export async function startDaemon(options: DaemonOptions) {
@@ -33,15 +39,16 @@ export async function startDaemon(options: DaemonOptions) {
   if (options.port !== undefined && (!Number.isInteger(options.port) || options.port < 0 || options.port > 65535)) {
     throw new AppError('INVALID_PORT', '포트는 0에서 65535 사이의 정수여야 합니다.');
   }
-  const origins = options.origins ?? [];
+  const origins = [...(options.origins ?? [])];
   for (const value of origins) {
     const origin = new URL(value);
     if (!['http:', 'https:'].includes(origin.protocol) || !['127.0.0.1', 'localhost'].includes(origin.hostname) || origin.origin !== value) {
       throw new AppError('INVALID_ORIGIN', '허용 Origin에는 로컬 개발 화면의 정확한 Origin을 지정하세요.');
     }
   }
+  const webRoot = options.webUi ? resolveWebRoot(options.projectRoot) : undefined;
   const directory = prepareDataDirectory(options.projectRoot, options.dataDirectory);
-  const store = new RecordStore(directory, options.workspaceDirectory);
+  const store = new RecordStore(directory, options.workspaceDirectory, options.exclusiveWorkspace);
   const subscriptions = new Map<WebSocket, Set<string>>();
   let runtime: AcpRuntime | undefined;
   try {
@@ -58,12 +65,45 @@ export async function startDaemon(options: DaemonOptions) {
   const methods = runtime ? [...METHODS, 'ai.get', 'settings.update', 'sessions.configure', 'runs.start', 'runs.cancel', 'runs.get', 'runs.watch', 'runs.unwatch', 'permissions.respond'] : [...METHODS, 'runs.get', 'runs.watch', 'runs.unwatch'];
   const instanceId = randomUUID();
   const token = Buffer.from(options.disableKeyAuth ? '' : options.token!);
-  const server = createServer((_request, response) => {
-    response.writeHead(404, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' });
-    response.end('Not found');
+  const opsSecret = options.ops ? Buffer.from(createOpsToken()) : undefined;
+  let accepting = false;
+  const startedAt = new Date().toISOString();
+  const server = createServer((request, response) => {
+    try {
+      if (!accepting) { response.writeHead(503); response.end(); return; }
+      const port = (server.address() as AddressInfo).port;
+      const origin = request.headers.origin;
+      if (request.headers.host !== `127.0.0.1:${port}`) {
+        response.writeHead(403, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' });
+        response.end('Forbidden');
+        return;
+      }
+      if (stopping) {
+        response.writeHead(503, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store', Connection: 'close' });
+        response.end('Stopping');
+        return;
+      }
+      if (handleOps(request, response)) return;
+      if (webRoot) {
+        if (origin !== undefined && !origins.includes(origin)) {
+          response.writeHead(403, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' });
+          response.end('Forbidden');
+          return;
+        }
+        serveWebAsset(webRoot, request, response, (html) => injectBundledEndpoint(html, port));
+        return;
+      }
+      response.writeHead(404, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' });
+      response.end('Not found');
+    } catch {
+      if (!response.headersSent) {
+        response.writeHead(500, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' });
+      }
+      response.end();
+    }
   });
   server.headersTimeout = 5_000;
-  server.requestTimeout = 5_000;
+  server.requestTimeout = options.ops ? 180_000 : 5_000;
   server.maxConnections = 32;
   const connections = new Set<Socket>();
   let stopping = false;
@@ -82,6 +122,77 @@ export async function startDaemon(options: DaemonOptions) {
       return;
     }
     if (socket.readyState === WebSocket.OPEN) socket.send(text);
+  }
+
+  function json(response: ServerResponse, status: number, body: unknown) {
+    const text = JSON.stringify(body);
+    response.writeHead(status, {
+      'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store',
+      'Content-Length': Buffer.byteLength(text), Connection: 'close',
+    });
+    response.end(text);
+  }
+
+  function identityFields(port: number) {
+    return {
+      instanceId, dataDir: directory, workspace: store.workspace.path, protocolMajor: PROTOCOL_MAJOR,
+      appVersion: APP_VERSION, webUi: Boolean(webRoot), aiExecution: Boolean(runtime), port,
+    };
+  }
+
+  function handleOps(request: IncomingMessage, response: ServerResponse) {
+    if (!options.ops || !opsSecret || !isOpsPath(request.url)) return false;
+    const port = (server.address() as AddressInfo).port;
+    const path = request.url;
+    if (request.headers.host !== `127.0.0.1:${port}` || request.headers.origin !== undefined) {
+      json(response, 403, { error: { code: 'FORBIDDEN', message: '로컬 운영 제어에서 허용된 요청이 아닙니다.' } });
+      return true;
+    }
+    if (path === opsPath('identify') && request.method === 'GET') {
+      const challenge = request.headers['x-worknaru-challenge'];
+      if (typeof challenge !== 'string' || !/^[a-zA-Z0-9_-]{43}$/.test(challenge)) {
+        json(response, 400, { error: { code: 'INVALID_REQUEST', message: '실행 확인 challenge가 필요합니다.' } });
+        return true;
+      }
+      const identity = identityFields(port);
+      json(response, 200, { type: 'worknaru.ops.identify', ...identity, proof: identityProof(opsSecret.toString(), challenge, identity) });
+      return true;
+    }
+    const expected = Buffer.from(`Bearer ${opsSecret.toString()}`);
+    const supplied = Buffer.from(request.headers.authorization ?? '');
+    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)
+      || request.headers['x-worknaru-instance'] !== instanceId) {
+      json(response, 401, { error: { code: 'AUTH_FAILED', message: '운영 제어 인증에 실패했습니다.' } });
+      expected.fill(0);
+      return true;
+    }
+    expected.fill(0);
+    if (path === opsPath('status') && request.method === 'GET') {
+      json(response, 200, {
+        type: 'worknaru.ops.status', ...identityFields(port),
+        activeRuns: store.activeRunCount(), pendingApprovals: store.pendingApprovalCount(),
+        pid: process.pid, startedAt,
+      });
+      return true;
+    }
+    if (path === opsPath('stop') && request.method === 'POST') {
+      if (closing) {
+        json(response, 409, { error: { code: 'DAEMON_STOPPING', message: '종료가 이미 진행 중입니다.' } });
+        return true;
+      }
+      const cancelActive = request.headers['x-worknaru-cancel-active'] === 'yes';
+      const activeRuns = store.activeRunCount();
+      const pendingApprovals = store.pendingApprovalCount();
+      if ((activeRuns > 0 || pendingApprovals > 0) && !cancelActive) {
+        json(response, 409, { code: 'DAEMON_BUSY', activeRuns, pendingApprovals });
+        return true;
+      }
+      stopping = true;
+      void close({ socket: request.socket, response }).catch(() => {});
+      return true;
+    }
+    json(response, 404, { error: { code: 'NOT_FOUND', message: '지원하지 않는 운영 요청입니다.' } });
+    return true;
   }
 
   wss.on('connection', (socket) => {
@@ -172,7 +283,7 @@ export async function startDaemon(options: DaemonOptions) {
   });
 
   server.on('upgrade', (request, socket, head) => {
-    if (stopping) { socket.destroy(); return; }
+    if (!accepting || stopping) { socket.destroy(); return; }
     const address = server.address() as AddressInfo;
     const origin = request.headers.origin;
     if (request.url !== '/ws' || request.headers.host !== `127.0.0.1:${address.port}` || (origin !== undefined && !origins.includes(origin))) {
@@ -193,36 +304,101 @@ export async function startDaemon(options: DaemonOptions) {
     wss.close();
     await runtime?.close();
     store.close();
+    if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE') {
+      throw new AppError('PORT_IN_USE', '지정한 포트가 이미 사용 중입니다. 다른 프로세스를 종료하지 않습니다.');
+    }
     throw error;
   }
   const port = (server.address() as AddressInfo).port;
+  const httpOrigin = `http://127.0.0.1:${port}`;
+  if (webRoot && !origins.includes(httpOrigin)) origins.push(httpOrigin);
+  if (options.ops && opsSecret) {
+    try {
+      writeRuntimeState(directory, {
+        schema: 1, instanceId, dataDir: directory, workspace: store.workspace.path,
+        pid: process.pid, startedAt, port, protocolMajor: PROTOCOL_MAJOR, appVersion: APP_VERSION,
+        webUi: Boolean(webRoot), aiExecution: Boolean(runtime),
+      }, opsSecret.toString());
+    } catch (error) {
+      wss.close();
+      await runtime?.close();
+      store.close();
+      const serverClosed = new Promise<void>((resolve) => server.close(() => resolve()));
+      for (const socket of connections) socket.destroy();
+      await serverClosed;
+      throw error;
+    }
+  }
   let closing: Promise<boolean> | undefined;
+  const finished = Promise.withResolvers<boolean>();
+  function close(keep?: { socket: Socket; response: ServerResponse }): Promise<boolean> {
+    closing ??= (async () => {
+      stopping = true;
+      accepting = false;
+      let confirmed = false;
+      // Stop accepting new TCP/HTTP before any completion body. The keep socket stays
+      // open so a separate stop CLI can read the result after owned resources are gone.
+      let listenersConfirmed = true;
+      const serverClosed = new Promise<void>((resolve) => server.close((error) => { if (error) listenersConfirmed = false; resolve(); }));
+      const wssClosed = new Promise<void>((resolve) => wss.close((error) => { if (error) listenersConfirmed = false; resolve(); }));
+      try {
+        confirmed = runtime ? await runtime.close().catch(() => false) : true;
+        for (const socket of wss.clients) socket.terminate();
+        for (const socket of connections) {
+          if (socket !== keep?.socket) socket.destroy();
+        }
+        await wssClosed;
+        if (options.ops) {
+          try { removeOwnedRuntimeState(directory, instanceId); }
+          catch { confirmed = false; }
+        }
+        store.close();
+        token.fill(0);
+        opsSecret?.fill(0);
+        confirmed = confirmed && listenersConfirmed && !server.listening;
+        if (keep && !keep.response.writableEnded && !keep.response.destroyed) {
+          const payload = confirmed
+            ? { stopped: true, instanceId }
+            : { code: 'STOP_UNCONFIRMED', error: 'AI 프로세스 정리를 확인하지 못했습니다.' };
+          json(keep.response, confirmed ? 200 : 500, payload);
+          await Promise.race([once(keep.response, 'finish'), new Promise((resolve) => { setTimeout(resolve, 2_000).unref(); })]).catch(() => {});
+        }
+        keep?.socket.destroy();
+        await serverClosed;
+        confirmed = confirmed && listenersConfirmed;
+        finished.resolve(confirmed);
+        return confirmed;
+      } catch (error) {
+        finished.resolve(false);
+        try { store.close(); } catch { /* already closed */ }
+        token.fill(0);
+        opsSecret?.fill(0);
+        keep?.socket.destroy();
+        for (const socket of wss.clients) socket.terminate();
+        for (const socket of connections) socket.destroy();
+        await Promise.all([serverClosed, wssClosed]);
+        return false;
+      }
+    })();
+    return closing;
+  }
+  accepting = true;
   return {
     url: `ws://127.0.0.1:${port}/ws`,
+    httpOrigin,
     workspace: store.workspace,
     storeEpoch: store.epoch,
     daemonInstanceId: instanceId,
+    webUi: Boolean(webRoot),
+    aiExecution: Boolean(runtime),
     activeRunCount: () => store.activeRunCount(),
-    close(): Promise<boolean> {
-      closing ??= (async () => {
-        try {
-          stopping = true;
-          const confirmed = runtime ? await runtime.close().catch(() => false) : true;
-          const serverClosed = new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-          for (const socket of wss.clients) socket.terminate();
-          // Include partial HTTP requests and rejected upgrades, which wss does not own.
-          for (const socket of connections) socket.destroy();
-          await Promise.all([
-            serverClosed,
-            new Promise<void>((resolve, reject) => wss.close((error) => error ? reject(error) : resolve())),
-          ]);
-          return confirmed;
-        } finally {
-          store.close();
-          token.fill(0);
-        }
-      })();
-      return closing;
-    },
+    pendingApprovalCount: () => store.pendingApprovalCount(),
+    closed: finished.promise,
+    close(): Promise<boolean> { return close(); },
   };
+}
+
+function injectBundledEndpoint(html: string, port: number) {
+  if (html.includes('worknaru-dev-instance') || html.includes('worknaru-daemon-ws')) return html;
+  return html.replace('<head>', `<head>\n    <meta name="worknaru-daemon-ws" content="ws://127.0.0.1:${port}/ws" />`);
 }

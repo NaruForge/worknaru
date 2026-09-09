@@ -34,7 +34,7 @@ export class RecordStore {
   readonly epoch: string;
   readonly workspace: Workspace;
 
-  constructor(private readonly directory: string, workspaceDirectory: string) {
+  constructor(private readonly directory: string, workspaceDirectory: string, exclusiveWorkspace = false) {
     const workspace = workspacePath(workspaceDirectory);
     validateDataFiles(directory);
     try {
@@ -56,6 +56,9 @@ export class RecordStore {
       if (!epoch.success) throw new Error('Invalid metadata');
       this.epoch = epoch.data;
       this.workspace = this.transaction(() => {
+        if (exclusiveWorkspace && this.db.prepare('SELECT 1 FROM workspaces WHERE path_key != ? LIMIT 1').get(workspace.key)) {
+          throw new AppError('WORKSPACE_CONFLICT', '이 데이터 영역은 다른 Workspace에 연결되어 있습니다. CLI는 자동으로 바꾸지 않습니다.');
+        }
         const found = this.db.prepare('SELECT id AS workspaceId, path FROM workspaces WHERE path_key = ?').get(workspace.key) as Workspace | undefined;
         if (found) return found;
         const created = { workspaceId: randomUUID(), path: workspace.path };
@@ -459,6 +462,10 @@ export class RecordStore {
 
   activeRunCount() {
     return Number(this.db.prepare("SELECT COUNT(*) AS count FROM runs WHERE state IN ('running','cancelling')").get()!.count);
+  }
+
+  pendingApprovalCount() {
+    return Number(this.db.prepare("SELECT COUNT(*) AS count FROM file_approvals WHERE state = 'pending'").get()!.count);
   }
 
   recoverySessions() {
