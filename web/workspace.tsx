@@ -78,11 +78,12 @@ export function App({ model }: { model: ChatStateStore }) {
     else setConnectionOpen(true);
   };
   const list = <ConversationList state={state} model={model} select={(id) => { void model.select(id); setDrawer(false); }} />;
+  const refreshSettings = () => { void model.refreshSettings(); void model.refreshAi(); };
   const workspaceName = state.workspace?.path.split(/[\\/]/).filter(Boolean).at(-1) ?? 'Workspace';
   return <>
     <WorkspaceShell name={workspaceName} online={state.connection === 'online'} sidebar={wide && expanded ? list : undefined}
       theme={theme} toggleTheme={() => setTheme(theme === 'light' ? 'dark' : 'light')} connection={() => setConnectionOpen(true)}
-      settings={() => { setSettingsOpen(true); void model.refreshAi(); }}
+      settings={() => { setSettingsOpen(true); refreshSettings(); }}
       listOpen={wide ? expanded : drawer} navigationLabel="대화 목록 열기 또는 접기" toggleList={() => wide ? setExpanded(!expanded) : setDrawer(!drawer)}>
       <Chat state={state} model={model} reconnect={reconnect} />
     </WorkspaceShell>
@@ -91,14 +92,15 @@ export function App({ model }: { model: ChatStateStore }) {
       <div className="settings-content">
         <section><h2>Workspace 연결</h2><p className="muted small">{state.connection === 'online' ? '연결됨' : '연결 끊김'} · {state.endpoint || endpoint}</p>
           <button className="settings-action" onClick={() => { setSettingsOpen(false); setConnectionOpen(true); }}>연결 설정 변경</button></section>
-        <section><div className="settings-section-heading"><h2>AI 인증</h2><button className="settings-action" disabled={state.connection !== 'online' || !state.ready?.aiExecution || state.aiLoading} onClick={() => void model.refreshAi()}>{state.aiLoading ? '확인 중…' : '상태 새로고침'}</button></div>
+        <section><div className="settings-section-heading"><h2>AI 인증</h2><button className="settings-action" disabled={state.connection !== 'online' || state.busy || !!state.pending || state.aiLoading || state.settingsLoading} onClick={refreshSettings}>{state.aiLoading || state.settingsLoading ? '확인 중…' : '상태 새로고침'}</button></div>
           <p className="auth-status">{!state.ready?.aiExecution ? 'AI 연결 비활성' : state.aiLoading ? '인증 상태 확인 중…' : state.aiInfo ? ({ chatgpt: 'ChatGPT 로그인 정보 확인됨', apiKey: 'API 키 인증 정보 확인됨', other: '제공자 인증 정보 확인됨', signedOut: '로그인 정보 없음' })[state.aiInfo.authentication] : '인증 상태 확인 필요'}</p>
           <p className="muted small">기존 Codex CLI 로그인 정보를 사용합니다. WorkNaru 연결 키와 별개의 인증입니다.</p>
           {state.aiInfo?.authentication === 'signedOut' && <p className="muted small">Codex CLI에서 로그인한 뒤 Daemon을 다시 실행하세요.</p>}
           {state.aiError && <p className="error-text small" role="alert">{state.aiError}</p>}
         </section>
         <section><h2>새 대화 기본값</h2><p className="muted small">선택하면 저장됩니다. 기존 대화의 설정은 유지됩니다.</p>
-          <AiControls defaults info={state.aiInfo} selection={state.settings?.selection} disabled={state.connection !== 'online' || state.busy || !!state.pending || !state.settings?.storageAvailable} change={(selection) => void model.configure(selection)} />
+          <AiControls defaults info={state.aiInfo} selection={state.settings?.selection} disabled={state.connection !== 'online' || state.busy || !!state.pending || !!state.settingsLoading || !state.settings?.storageAvailable} change={(selection) => void model.configure(selection)} />
+          {state.settingsError && <p className="error-text small" role="alert">{state.settingsError}</p>}
         </section>
         <section><h2>Permission</h2><p className="muted small">텍스트 대화 · 도구 실행 미지원</p></section>
         {state.pending && <p role="status">{state.busy ? '접수 확인 중…' : '접수 여부 확인이 필요합니다.'}{!state.busy && <button className="settings-action" onClick={() => void model.resolvePending()}>접수 확인</button>}</p>}

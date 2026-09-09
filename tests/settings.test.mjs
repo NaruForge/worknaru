@@ -126,6 +126,55 @@ test('a lost configuration receipt is recovered from the journal without reverti
   assert.equal(activity(f).filter((item) => item.type === 'prompt').length, 0);
 });
 
+test('defaults refresh blocks edits while loading, discards prior connection results and recovers from read failure', async (t) => {
+  const f = fixture(t);
+  const daemon = await startDaemon(options(f));
+  f.cleanups.push(() => daemon.close());
+  const remote = await connect(f, daemon);
+  await remote.call('ai.get', {});
+  const client = new WebClient();
+  const model = new ChatStateStore(client, { getItem: () => null, setItem() {}, removeItem() {} });
+  t.after(() => model.close());
+  await model.connect(daemon.url, f.token);
+  for (let i = 0; i < 100 && !model.getSnapshot().aiInfo; i++) await delay(30);
+  assert.ok(model.getSnapshot().aiInfo);
+  const original = client.call.bind(client);
+  const captured = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  let hold = true;
+  let fail = false;
+  let writes = 0;
+  client.call = async (method, ...args) => {
+    if (method === 'settings.update') writes++;
+    if (method === 'settings.get' && fail) throw new Error('설정 조회 시험 오류');
+    const result = await original(method, ...args);
+    if (method === 'settings.get' && hold) { hold = false; captured.resolve(); await release.promise; }
+    return result;
+  };
+  const stale = model.refreshSettings();
+  await captured.promise;
+  assert.equal(model.getSnapshot().settingsLoading, true);
+  await model.configure(sol);
+  assert.equal(writes, 0);
+  model.close();
+  assert.equal((await remote.call('settings.update', { selection: sol }, mutation(remote))).ok, true);
+  await model.connect(daemon.url, f.token);
+  assert.deepEqual(model.getSnapshot().settings.selection, sol);
+  release.resolve();
+  await stale;
+  assert.deepEqual(model.getSnapshot().settings.selection, sol);
+  fail = true;
+  await model.refreshSettings();
+  assert.equal(model.getSnapshot().settings, undefined);
+  assert.match(model.getSnapshot().settingsError, /설정 조회 시험 오류/);
+  assert.equal(model.getSnapshot().settingsLoading, false);
+  fail = false;
+  await model.refreshSettings();
+  assert.deepEqual(model.getSnapshot().settings.selection, sol);
+  assert.equal(model.getSnapshot().settingsError, undefined);
+  assert.equal(activity(f).filter((item) => item.type === 'prompt').length, 0);
+});
+
 for (const [mode, code] of [['mismatch', 'MODEL_UNCONFIRMED'], ['missing', 'MODEL_UNCONFIRMED'], ['unsupported', 'MODEL_UNSUPPORTED']]) {
   test(`test model enforcement rejects ${mode} before any prompt`, async (t) => {
     const f = fixture(t);

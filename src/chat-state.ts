@@ -17,7 +17,7 @@ export type ChatState = {
   sessions: Session[]; nextSession: number | null; selected?: string;
   pages: Record<string, Page>; runs: Record<string, Run>; drafts: Record<string, string>;
   loading: boolean; busy: boolean; pending?: Pending; error?: string;
-  settings?: AiSettings; aiInfo?: AiInfo; aiLoading?: boolean; aiError?: string;
+  settings?: AiSettings; settingsLoading?: boolean; settingsError?: string; aiInfo?: AiInfo; aiLoading?: boolean; aiError?: string;
 };
 const final = (run: Run) => ['completed', 'failed', 'cancelled'].includes(run.state);
 const errorText = (error: unknown) => error instanceof Error ? error.message : '요청을 확인할 수 없습니다.';
@@ -51,7 +51,7 @@ export class ChatStateStore {
     ++this.selection;
     clearTimeout(this.poll);
     this.watched = undefined;
-    this.update({ connection: 'connecting', busy: false, loading: false, error: undefined, aiInfo: undefined, settings: undefined, aiLoading: false, aiError: undefined });
+    this.update({ connection: 'connecting', busy: false, loading: false, error: undefined, aiInfo: undefined, settings: undefined, settingsLoading: false, settingsError: undefined, aiLoading: false, aiError: undefined });
     try {
       const ready = await this.client.connect(endpoint, token);
       const workspace = await this.client.call('workspaces.get', {});
@@ -68,7 +68,7 @@ export class ChatStateStore {
       if (!this.state.selected && this.state.sessions[0]) this.update({ selected: this.state.sessions[0].sessionId });
       if (this.state.selected) await this.select(this.state.selected);
       if (pending) await this.resolvePending();
-      if (ready.capabilities.includes('settings.get')) this.update({ settings: await this.client.call('settings.get', {}) });
+      if (ready.capabilities.includes('settings.get')) await this.readSettings();
       if (generation !== this.generation) return;
       if (ready.capabilities.includes('ai.get')) void this.refreshAi();
       this.schedule();
@@ -181,6 +181,19 @@ export class ChatStateStore {
     this.update({ pending });
   }
   private canMutate() { return this.state.connection === 'online' && !this.state.busy && !this.state.pending && this.state.ready && this.state.workspace; }
+  private async readSettings() {
+    const generation = this.generation;
+    const settings = await this.client.call('settings.get', {});
+    if (generation === this.generation) this.update({ settings, settingsError: undefined });
+  }
+  async refreshSettings() {
+    if (!this.canMutate() || !this.state.ready?.capabilities.includes('settings.get') || this.state.settingsLoading) return;
+    const generation = this.generation;
+    this.update({ settingsLoading: true, settingsError: undefined });
+    try { await this.readSettings(); }
+    catch (error) { if (generation === this.generation) this.update({ settings: undefined, settingsError: errorText(error) }); }
+    finally { if (generation === this.generation) this.update({ settingsLoading: false }); }
+  }
   async refreshAi() {
     if (this.state.connection !== 'online' || !this.state.ready?.capabilities.includes('ai.get') || this.state.aiLoading) return;
     const generation = this.generation;
@@ -192,7 +205,7 @@ export class ChatStateStore {
     finally { if (generation === this.generation) this.update({ aiLoading: false }); }
   }
   async configure(selection: AiSelection, sessionId?: string) {
-    if (!this.canMutate() || !this.state.aiInfo) return;
+    if (!this.canMutate() || !this.state.aiInfo || (!sessionId && (this.state.settingsLoading || !this.state.settings?.storageAvailable))) return;
     const pending: Pending = { method: sessionId ? 'sessions.configure' : 'settings.update', selection, sessionId,
       requestId: crypto.randomUUID(), storeEpoch: this.state.ready!.storeEpoch, workspaceId: this.state.workspace!.workspaceId };
     await this.mutate(pending, () => sessionId
@@ -224,7 +237,7 @@ export class ChatStateStore {
   }
   private async applyReceipt(result: { session: Session } | { run: Run } | { settings: AiSettings }, pending: Pending) {
     if ('settings' in result) {
-      this.update({ settings: await this.client.call('settings.get', {}) });
+      await this.readSettings();
     } else if ('session' in result) {
       if (pending.method === 'sessions.configure') { await this.refreshSession(result.session.sessionId); return; }
       this.update({ sessions: [result.session, ...this.state.sessions.filter((session) => session.sessionId !== result.session.sessionId)] });

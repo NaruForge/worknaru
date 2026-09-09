@@ -256,6 +256,36 @@ test('Settings defaults and per-conversation choices remain separate, persist on
   await expect(page.locator('.run-state')).toHaveText('중지 완료');
 });
 
+test('opening Settings and refreshing reads defaults changed by another client', async ({ page, daemon, records }) => {
+  await login(page, daemon, records);
+  await newSession(page);
+  await expect(page.getByLabel('Model', { exact: true })).toBeEnabled({ timeout: 15_000 });
+  const other = await connect(records, daemon);
+  await other.call('ai.get', {});
+  const sol = { model: 'gpt-5.6-sol', reasoningEffort: 'high' };
+  const luna = { model: 'gpt-5.6-luna', reasoningEffort: 'low' };
+  expect((await other.call('settings.update', { selection: sol }, mutation(other))).ok).toBe(true);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+  await expect(settings.getByLabel('기본 Model', { exact: true })).toHaveValue(sol.model);
+  await expect(settings.getByLabel('기본 Reasoning Effort', { exact: true })).toHaveValue('high');
+  expect((await other.call('settings.update', { selection: luna }, mutation(other))).ok).toBe(true);
+  await settings.getByRole('button', { name: '상태 새로고침', exact: true }).click();
+  await expect(settings.getByLabel('기본 Model', { exact: true })).toHaveValue(luna.model);
+  await expect(settings.getByLabel('기본 Reasoning Effort', { exact: true })).toHaveValue('low');
+  await settings.getByRole('button', { name: 'Settings 닫기' }).click();
+  expect((await other.call('settings.update', { selection: sol }, mutation(other))).ok).toBe(true);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await expect(settings.getByLabel('기본 Model', { exact: true })).toHaveValue(sol.model);
+  await settings.getByRole('button', { name: 'Settings 닫기' }).click();
+  await expect(page.getByLabel('Model', { exact: true })).toHaveValue(luna.model);
+  await newSession(page);
+  await expect(page.getByLabel('Model', { exact: true })).toHaveValue(sol.model);
+  await expect(page.getByLabel('Reasoning Effort', { exact: true })).toHaveValue('high');
+  const events = readFileSync(join(records.root, 'agent.log'), 'utf8').trim().split('\n').map(JSON.parse);
+  expect(events.filter((event) => event.type === 'prompt')).toHaveLength(0);
+});
+
 test('a lost setting response is recovered after reload without creating a model turn', async ({ page, daemon, records }) => {
   let drop = true;
   let configureId;
