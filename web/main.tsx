@@ -3,9 +3,10 @@ import { createRoot } from 'react-dom/client';
 import { App } from './workspace.js';
 import { ChatStateStore } from '../src/chat-state.js';
 import { WebClient } from '../src/web-client.js';
+import { developmentEndpoint } from './dev-server.js';
 import './style.css';
 
-const model = new ChatStateStore(new WebClient(), {
+const model = new ChatStateStore(new WebClient(developmentEndpoint()), {
   getItem: (key) => sessionStorage.getItem(key),
   setItem: (key, value) => sessionStorage.setItem(key, value),
   removeItem: (key) => sessionStorage.removeItem(key),

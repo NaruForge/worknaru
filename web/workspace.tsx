@@ -4,7 +4,7 @@ import type { ChatStateStore } from '../src/chat-state.js';
 import { Chat, ConversationList } from './chat.js';
 import { Icon } from './icons.js';
 import { AiControls } from './ai-controls.js';
-import { useDevServer } from './dev-server.js';
+import { developmentEndpoint, useDevServer } from './dev-server.js';
 
 function Dialog({ title, children, close, drawer = false }: { title: string; children: ReactNode; close: () => void; drawer?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -55,7 +55,7 @@ export function App({ model }: { model: ChatStateStore }) {
   const state = useSyncExternalStore(model.subscribe, model.getSnapshot);
   const [connectionOpen, setConnectionOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [endpoint, setEndpoint] = useState(() => document.querySelector<HTMLMetaElement>('meta[name="worknaru-dev-endpoint"]')?.content ?? 'ws://127.0.0.1:4310/ws');
+  const [endpoint, setEndpoint] = useState(() => developmentEndpoint() ?? 'ws://127.0.0.1:4310/ws');
   const [tokenInput, setTokenInput] = useState('');
   const credentials = useRef({ endpoint: '', token: '' });
   const dev = useDevServer((address) => endpoint.trim() === address && tokenInput ? tokenInput : credentials.current.endpoint === address ? credentials.current.token : '');

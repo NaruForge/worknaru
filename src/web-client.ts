@@ -72,12 +72,15 @@ export class WebClient {
   ready?: Ready;
   onRun: (run: Run) => void = () => {};
   onDisconnect: (error: ClientError) => void = () => {};
+  constructor(private readonly gatewayEndpoint?: string) {}
 
   async connect(endpoint: string, token: string): Promise<Ready> {
     this.close();
     const url = new URL(endpoint);
-    if (url.protocol !== 'ws:' || url.hostname !== '127.0.0.1' || !url.port || url.pathname !== '/ws' || url.search || url.hash || url.username || url.password)
-      throw new ClientError('INVALID_URL', '로컬 Daemon 주소 ws://127.0.0.1:포트/ws를 입력하세요.');
+    const local = url.protocol === 'ws:' && url.hostname === '127.0.0.1' && Boolean(url.port) && url.pathname === '/ws';
+    const gateway = url.href === this.gatewayEndpoint && ['ws:', 'wss:'].includes(url.protocol) && /^\/p\/[a-f0-9]{16}\/__worknaru_ws$/.test(url.pathname);
+    if ((!local && !gateway) || url.search || url.hash || url.username || url.password)
+      throw new ClientError('INVALID_URL', '로컬 Daemon 주소 또는 이 화면의 개발 서버 연결 주소를 사용하세요.');
     if (!/^[a-zA-Z0-9_-]{43,128}$/.test(token)) throw new ClientError('INVALID_TOKEN', 'Daemon 실행 시 지정한 연결 키를 입력하세요.');
     const socket = new WebSocket(url);
     this.socket = socket;
