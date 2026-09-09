@@ -1,5 +1,7 @@
 # 화면과 Daemon의 통신 설계
 
+> 이 문서는 ACP 기반 초기 상세 설계의 기록이다. [Paseo 전환 #35](https://github.com/NaruForge/worknaru/issues/35) 이후 실제 계약은 [개발 안내의 protocol 2](../development.md#공통-daemon-계약)를 따른다. 아래 Run DTO·저장 접수·구독 필드는 현재 API가 아니다. WebSocket 채택의 승인 근거는 ADR에 보존한다.
+
 - 작성일: 2026-09-08
 - 관련 Work Item: [#3 플랫폼 초기 아키텍처 설계](https://github.com/NaruForge/worknaru/issues/3)
 - 제품 개념: [README](../../README.md)

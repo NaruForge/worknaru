@@ -1,6 +1,7 @@
-import type { AiInfo, AiSelection } from '../src/ai-settings.js';
-import { Field, Select } from './ui.js';
-import { Icon } from './icons.js';
+import { Field, Select } from '../ui.js';
+import { Icon } from '../icons.js';
+type AiSelection = { model: string; reasoningEffort: string };
+type AiInfo = { models: { id: string; name: string; efforts: string[]; fallbackEffort: string }[] };
 
 export function AiControls({ info, selection, disabled, change, defaults = false, compact = false }: {
   info?: AiInfo; selection?: { model: string | null; reasoningEffort: string | null }; disabled: boolean;

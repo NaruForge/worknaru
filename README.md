@@ -6,84 +6,39 @@
 
 ## 빠른 시작: 로컬 개발 점검
 
-Windows에서 **Node.js 24.18 이상 24.x**, **PowerShell 7**, **Codex CLI와 기존 로그인**을 준비합니다. 처음에는 저장소 루트에서 의존성을 설치합니다.
+Windows에서 **Node.js 24.18 이상 24.x**, **PowerShell 7**, **Codex CLI와 기존 로그인**을 준비하고 저장소 루트에서 실행합니다. Paseo의 native 패키지 설치 script를 허용해야 합니다.
 
 ```powershell
-cd C:\Projects\worknaru
-npm ci --cache .npm-cache --ignore-scripts
-```
-
-평소에는 다음 명령 하나를 실행합니다.
-
-```powershell
+npm ci --cache .npm-cache
 npm run dev
 ```
 
-다른 Tailscale 기기에서 같은 개발 서버에 접속하려면 Hub 옵션을 사용합니다.
+최신 코드를 빌드하고 전용 runtime·WorkNaru Daemon·Vite를 시작한 뒤 브라우저를 엽니다. 기본 UI는 `http://127.0.0.1:15173`, 제품 Daemon은 `ws://127.0.0.1:4310/ws`이며 화면은 자동 연결됩니다. 포트가 사용 중이면 `npm run dev -- --web-port 15175 --daemon-port 14310`처럼 변경합니다.
 
-```powershell
-npm run dev -- --hub
-```
+새 Chat에서 모델·추론 강도를 고르고 첫 입력과 후속 질문을 보낼 수 있습니다. Codex 도구 실행, 추가 권한의 1회 허용·거절, 취소와 새 기록의 재시작 조회를 제공합니다. Workspace 안의 파일 수정은 기본 허용하며 추가 권한이 필요한 작업만 요청 시 승인합니다.
 
-터미널에 출력된 **Hub 주소**를 다른 기기에서 열면 접속키 없이 바로 연결됩니다. 기존 서버와 데이터를 사용하며, 별도 앱 폴더나 복사본을 만들지 않습니다. 공유는 기본 20분이고 Dashboard 또는 출력된 명령으로 연장할 수 있습니다. 공유만 해제하면 개발 서버는 계속 실행되고, 개발 서버를 종료하면 이번 공유도 해제합니다. 기존 로컬 실행 중에 옵션을 적용하려면 서버를 종료한 뒤 위 명령으로 다시 실행합니다.
+종료는 실행 터미널의 **Ctrl+C**입니다. 진행 중인 작업을 중단하고 이번 실행이 소유한 runtime과 서버를 정리합니다. 탭 닫기·새로고침·호출 도구 종료는 제품 실행을 끝내지 않습니다.
 
-최신 코드를 빌드하고 Daemon과 UI 서버를 함께 시작한 뒤 기본 브라우저를 엽니다. 화면이 자동으로 연결되므로 바로 점검할 수 있습니다. 접속키 인증은 기본적으로 꺼져 있으며 키 생성·입력·클립보드 복사가 없습니다. 일반 실행의 기본 UI 주소는 `http://127.0.0.1:15173`이고, Hub 실행의 정확한 로컬·공유 주소는 터미널에 표시됩니다.
-
-점검을 마치면 화면 상단의 **개발 서버 종료**를 누릅니다. 진행 중인 AI 응답이 있으면 중단 여부를 확인하고, AI 프로세스와 두 서버를 정리합니다. **종료되었습니다**가 표시되면 탭을 닫으면 됩니다. 터미널의 `Ctrl+C`로도 종료할 수 있습니다. 탭을 닫는 것만으로 서버가 종료되지는 않습니다.
-
-저장된 대화와 설정은 `.worknaru-dev`에 남아 다음 실행에서 이어 확인할 수 있습니다. 보내지 않은 초안은 저장되지 않습니다. 응답을 중단한 대화는 기록을 확인하고 새 대화에서 다시 시작합니다. 화면을 새로고침해도 접속키 없이 자동으로 다시 연결됩니다. 접속키 인증이 필요한 실행에서는 `npm run dev -- --require-key`로 켤 수 있습니다.
+제품은 `.worknaru-dev/paseo-v1`의 **새 데이터**에서 시작합니다. 전용 Paseo·Codex home을 사용하며 개인 Codex 로그인 자료만 복사합니다. 구형 ACP 대화·파일 승인 기록은 읽거나 이식하지 않습니다. 기존 Workspace의 실제 파일은 그대로 사용합니다. 전체 Settings, 기존 운영 CLI·Hub 공유는 이번 작은 제품 범위에 포함하지 않습니다.
 
 | 목적 | 명령 |
 | --- | --- |
 | 실행·UI 점검 | `npm run dev` |
 | 타입 검사 | `npm run typecheck` |
-| 빌드와 서버 동작 시험 | `npm test` |
+| 빌드와 제품 동작 시험 | `npm test` |
 | 브라우저 동작 시험 | `npm run test:web` |
+| UI 없는 계약·runtime 시험 | `npm run test:daemon` |
 
-포트가 사용 중이거나 Windows에서 예약된 경우 `npm run dev -- --web-port 15174 --daemon-port 14310`처럼 지정합니다. UI 주소와 연결 설정은 함께 맞춰집니다. 상세 옵션, 개별 서버 실행, 실제 AI 검증은 [로컬 개발 안내](docs/development.md)를 참고하세요.
-
-### UI 없이 Daemon 실행·호출
-
-업무 기능은 Daemon 계약으로 요청·조회·제어합니다. 공유 상태와 최종 판정은 Daemon 또는 Daemon이 관리하는 Module 서비스가 소유하며, Web UI는 그 계약을 사용하는 클라이언트입니다. 초안·탐색·화면 상태는 클라이언트가 관리할 수 있습니다.
-
-설치 후 다음 명령은 Web 빌드·Vite·브라우저 없이 Daemon을 실행합니다. 저장·조회만 확인하려면 Codex 로그인 없이 사용할 수 있습니다.
+### 독립 실행과 UI 없는 호출
 
 ```powershell
 npm run build:daemon
-$env:WORKNARU_TOKEN = node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64url'))"
-npm start -- --data-dir .worknaru-dev --workspace . --port 4310
+npm start -- --workspace . --data-dir .worknaru-dev/paseo-v1
 ```
 
-다른 터미널에 같은 `WORKNARU_TOKEN`을 설정한 뒤 `npm run rpc -- --url ws://127.0.0.1:4310/ws`로 지원 기능과 저장 세대를 조회합니다. 실제 AI 실행·설정 변경·파일 승인은 Daemon을 `--acp --codex-path <codex.exe 경로>`와 함께 시작해야 합니다. 저장된 기록은 같은 데이터 경로에서 유지됩니다.
+다른 터미널에서 `npm run rpc`를 실행하면 같은 Daemon의 연결 상태를 조회합니다. JSON 요청 파일로 대화 생성·입력·설정·승인·취소도 호출할 수 있습니다. UI가 필요하면 `npm run build` 후 `npm start -- --web-ui`를 실행하고 `http://127.0.0.1:4310/`을 엽니다.
 
-`npm run test:daemon`은 가짜 ACP를 사용하는 Daemon·접속 클라이언트·공통 호출 도구 검사이며 실제 모델 질문을 보내지 않습니다. `npm test`는 Web 빌드와 개발 실행기 검사까지 포함합니다. JSON 요청 파일·표준 입력을 이용한 설정·실행·승인·취소 예제는 [UI 없는 공통 호출 도구](docs/development.md#ui-없는-공통-호출-도구)를 참고하세요. 기존 `npm run chat`은 텍스트 대화용 개발 클라이언트이며 전체 업무 CLI는 아닙니다.
-
-독립 Daemon은 실행한 터미널에서 `Ctrl+C`로 종료합니다. 호출 도구의 `Ctrl+C`, 탭 닫기와 연결 종료는 해당 클라이언트만 닫습니다. 통합 개발 실행의 **개발 서버 종료**는 실행기가 소유한 Daemon·UI를 함께 정리하는 별도 운영 기능입니다.
-
-### 독립 Daemon CLI
-
-개발 실행과 별도로, 빌드된 Daemon을 시작·조회·종료하는 로컬 CLI를 제공합니다. 다음 명령은 이 checkout 안에서 실행합니다.
-
-```powershell
-npm run build
-$env:WORKNARU_TOKEN = node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64url'))"
-node dist/cli.js daemon start --data-dir .worknaru-dev --workspace . --port 4310 --web-ui
-```
-
-출력된 HTTP 주소를 열고 같은 터미널의 `$env:WORKNARU_TOKEN` 값을 연결 창에 입력합니다. 실제 AI 실행에는 시작 명령에 `--acp --codex-path (Get-Command codex.exe).Source`를 추가합니다. `--web-ui`만으로 AI를 활성화하지 않습니다. UI 없이 실행하려면 `npm run build:daemon`으로 빌드하고 `--web-ui`를 생략합니다.
-
-별도 터미널에서 같은 데이터 영역을 조회하거나 종료합니다. 이 운영 명령은 해당 데이터 영역의 별도 자격증명을 사용하므로 업무 접속키를 다른 터미널에 복사할 필요가 없습니다.
-
-```powershell
-node dist/cli.js daemon status --data-dir .worknaru-dev --json
-node dist/cli.js daemon stop --data-dir .worknaru-dev
-# 실행·승인 대기를 명시적으로 중단하고 종료할 때
-node dist/cli.js daemon stop --data-dir .worknaru-dev --cancel-active
-```
-
-기본 실행은 foreground이며 브라우저를 자동으로 열지 않습니다. `--open`을 추가하면 브라우저를 열고, 탭을 닫아도 Daemon과 접수된 실행은 유지합니다. 기본 `stop`은 활성 작업이 있으면 거절합니다. Ctrl+C는 작업 중단을 포함한 종료입니다. 기록과 설정은 보존합니다.
-
-`worknaru` bin을 선언했지만 전역 설치·백그라운드 서비스·배포 패키지를 제공하는 단계는 아닙니다. 현재 지원하는 진입점은 위의 로컬 Node 명령입니다. 기존 `npm start`와 `npm run dev`도 유지합니다. [CLI 옵션과 운영·복구 계약](docs/development.md#독립-daemon-cli)을 참고하세요.
+`--codex-path` 또는 `WORKNARU_CODEX_PATH`로 executable을 지정할 수 있으며, 생략하면 PATH의 `codex.exe`를 사용합니다. 설치·개별 실행·protocol 2 호출 예제·결과 불명 처리·실제 AI 검증·복귀 절차는 [로컬 개발 안내](docs/development.md)를 따릅니다.
 
 ## 플랫폼과 Module
 
@@ -141,7 +96,7 @@ Module에는 수동 편집, 규칙 기반 처리와 AI 상호작용을 함께 �
 
 업무 데이터의 소유는 그 의미와 규칙에 대한 책임을 뜻합니다. 실제 저장 위치나 데이터베이스를 Module마다 따로 두는 결정은 아닙니다. 플랫폼은 문서의 업무상 확정 조건을 정하지 않으며, Module은 AI를 사용할 때 플랫폼의 공통 연결·실행 기능을 이용합니다.
 
-플랫폼의 AI Agent 관리 기반은 [Paseo Server/Client를 사용하도록 결정했습니다](docs/adr/0016-use-paseo-for-agent-management.md). Provider 연결·Agent 생명주기·native 기록은 Paseo에 위임하고, WorkNaru는 업무 API·Module 데이터·사람의 검토·결과물을 소유합니다. 필요한 내부 `DaemonClient` 사용은 작은 연결 코드에 한정합니다. 기존 대화는 이식하지 않고 새 데이터로 시작하며, 현재 기능·코드의 보존 없이 필요한 부분을 새로 만들 수 있습니다. 실제 필요한 사용자 흐름을 Paseo 기능에 맞게 구성합니다. 아래 실행 명령과 개발 안내는 아직 현재 ACP 구현 기준입니다. 분석 근거는 [채택 재검토](docs/research/2026-09-09-issue34-runtime-and-product-direction.md), 이행 범위와 계획은 [Migration 이슈 #35](https://github.com/NaruForge/worknaru/issues/35)에 기록합니다.
+플랫폼의 AI Agent 관리 기반은 [Paseo Server/Client를 사용하도록 결정했습니다](docs/adr/0016-use-paseo-for-agent-management.md). Provider 연결·Agent 생명주기·native 기록은 Paseo에 위임하고, WorkNaru는 업무 API·Module 데이터·사람의 검토·결과물을 소유합니다. 필요한 내부 `DaemonClient` 사용은 작은 연결 코드에 한정합니다. 기존 대화는 이식하지 않고 새 데이터로 시작하며, 현재 기능·코드의 보존 없이 필요한 부분을 새로 만들 수 있습니다. 실제 필요한 사용자 흐름을 Paseo 기능에 맞게 구성합니다. 현재 실행은 Paseo 기반의 새 Chat을 사용합니다. 플랫폼의 제품 정책·UI·Module은 작은 runtime 인터페이스를 사용하며, Paseo 의존은 연결부와 조립 지점에 한정합니다. 별도 NativeRuntime은 구현하지 않았습니다. 분석 근거는 [채택 재검토](docs/research/2026-09-09-issue34-runtime-and-product-direction.md), 이행 범위와 계획은 [Migration 이슈 #35](https://github.com/NaruForge/worknaru/issues/35)에 기록합니다.
 
 ### 업무 서비스의 예시
 
@@ -197,6 +152,6 @@ Module 등록, 화면 연결과 AI 기능 사용의 구체적인 흐름은 [Modu
 
 ## 로컬 개발
 
-Daemon은 Session·텍스트 메시지의 SQLite 저장과 재시작 후 조회를 제공합니다. Windows에서는 `--acp` 옵션으로 Codex와 텍스트 대화를 실행하고, 응답 스트리밍·기록 저장·취소를 사용할 수 있습니다. 정상 완료된 대화는 같은 데이터·Workspace로 재시작한 뒤 기존 AI 맥락을 이어갈 수 있습니다. Settings에서 연결·인증 상태와 새 대화의 기본 모델·추론 강도를 확인하고, Chat에서는 대화별로 모델·추론 강도를 선택할 수 있습니다. 선택값은 저장되며 질문 전송 전에 ACP 적용값을 확인합니다. Chat에서 Workspace의 기존 텍스트 파일 수정을 요청하면 공통 승인 화면에서 수정 전후 내용을 확인하고 허용·거절할 수 있습니다. 파일 도구는 승인한 내용만 적용하며, 결과는 대화 기록에 남습니다. 재개 조건과 실패 시 동작은 로컬 개발 안내를 따릅니다. 첫 Chat Web UI와 개발용 터미널 클라이언트를 제공합니다. 화면의 로컬 실행은 `npm run dev:web`, 빌드한 화면의 확인은 `npm run preview:web`를 사용합니다.
+Daemon은 Paseo가 관리하는 대화·실행·도구 기록을 제품 API로 제공합니다. WorkNaru SQLite에는 대화 연결과 미확정 요청 정보를 저장하며, 정상 완료된 대화는 같은 데이터·Workspace로 재시작한 뒤 이어갈 수 있습니다. Chat의 모델·추론 선택, 추가 권한의 1회 허용·거절과 취소는 UI와 `npm run rpc`에서 같은 계약으로 처리합니다.
 
 일상적인 실행·종료는 위의 빠른 시작을 따릅니다. 인증 설정과 개별 실행·조회 예시는 [로컬 Daemon 개발 안내](docs/development.md)를 참고하세요.

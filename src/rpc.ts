@@ -5,8 +5,9 @@ import { ChatConnection, type SocketLike } from './chat-connection.js';
 import { ChatParams, type ChatMethod } from './chat-contract.js';
 
 const { values, positionals } = parseArgs({ allowPositionals: true, options: {
-  url: { type: 'string', default: 'ws://127.0.0.1:4310/ws' }, file: { type: 'string' }, watch: { type: 'boolean', default: false },
+  url: { type: 'string', default: 'ws://127.0.0.1:4310/ws' }, file: { type: 'string' }, watch: { type: 'boolean', default: false }, help: { type: 'boolean' },
 } });
+if (values.help) { console.log('npm run rpc -- [--url ws://127.0.0.1:4310/ws] [--file <request.json>] [--watch]\n인자가 없으면 runtime.get을 호출합니다.'); process.exit(0); }
 const endpoint = new URL(values.url!);
 if (endpoint.protocol !== 'ws:' || !['127.0.0.1', 'localhost'].includes(endpoint.hostname) || endpoint.pathname !== '/ws') throw new Error('Use a loopback WorkNaru /ws endpoint.');
 const request = values.file ? JSON.parse(readFileSync(values.file, 'utf8')) : positionals.length ? JSON.parse(positionals.join(' ')) : { method: 'runtime.get', params: {} };

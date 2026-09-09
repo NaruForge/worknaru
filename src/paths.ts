@@ -1,6 +1,6 @@
 import { lstatSync, mkdirSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
-import { AppError } from './protocol.js';
+import { ChatError as AppError } from './chat-contract.js';
 
 export function checkoutRoot(fromModuleUrl: string) {
   return realpathSync(new URL('../', fromModuleUrl));
@@ -14,10 +14,6 @@ export function resolveWorkspaceDirectory(projectRoot: string, directory: string
 // Development data stays in this checkout. No automatic user-profile writes.
 export function prepareDataDirectory(projectRoot: string, directory: string) {
   return resolveDataDirectory(projectRoot, directory, true);
-}
-
-export function resolveExistingDataDirectory(projectRoot: string, directory: string) {
-  return resolveDataDirectory(projectRoot, directory, false);
 }
 
 function resolveDataDirectory(projectRoot: string, directory: string, create: boolean) {
@@ -50,19 +46,6 @@ export function assertUnlinkedFile(path: string, message = '데이터 파일의 
     throw new AppError('INVALID_DATA_PATH', message);
   }
   return stat;
-}
-
-export function validateDataFiles(directory: string) {
-  for (const file of ['owner.sqlite', 'owner.sqlite-journal', 'records.sqlite', 'records.sqlite-wal', 'records.sqlite-shm', 'records.sqlite-journal']) {
-    try {
-      const stat = lstatSync(join(directory, file));
-      if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink > 1) {
-        throw new AppError('INVALID_DATA_PATH', '데이터 파일의 링크나 파일 형식이 올바르지 않습니다.');
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    }
-  }
 }
 
 export function workspacePath(directory: string) {

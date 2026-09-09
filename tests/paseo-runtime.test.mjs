@@ -32,6 +32,8 @@ test('private config disables background features and authenticates only its own
   const env = privateRuntimeEnvironment({ paseoHome, codexHome: 'isolated-codex' });
   assert.equal(env.CODEX_HOME, 'isolated-codex');
   assert.equal(env.PASEO_HOME, paseoHome);
+  assert.equal(env.TEMP, join(paseoHome, '..', 'tmp'));
+  assert.equal(env.TMP, env.TEMP);
   assert.equal(env.OPENAI_API_KEY, undefined);
   assert.equal(env.CODEX_CONFIG, undefined);
 });

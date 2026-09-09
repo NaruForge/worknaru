@@ -1,7 +1,7 @@
 import { createReadStream, lstatSync, readFileSync, realpathSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { AppError } from './protocol.js';
+import { ChatError as AppError } from './chat-contract.js';
 
 const TYPES: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',

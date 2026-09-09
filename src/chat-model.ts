@@ -121,6 +121,7 @@ export class ChatModel {
         chatId = crypto.randomUUID();
         this.revision++;
         this.drafts.set(chatId, originalDraft);
+        this.drafts.delete(null);
         this.update({ selectedId: chatId, view: null });
         this.save(); // Stable creation identity survives a lost response; no initial prompt in creation.
         await this.client.call('chats.create', { id: chatId, title: text.replace(/\s+/g, ' ').slice(0, 60), selection: this.state.newSelection });

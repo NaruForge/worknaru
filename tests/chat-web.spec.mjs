@@ -1,12 +1,12 @@
 import { test, expect } from '@playwright/test';
 import { chatFixture } from './chat-fixture.mjs';
 
-const port = Number(process.env.WORKNARU_TEST_WEB_PORT ?? 5173);
+const port = Number(process.env.WORKNARU_TEST_WEB_PORT ?? 15174);
 const origin = `http://127.0.0.1:${port}`;
 let fixture;
 test.beforeEach(async () => { fixture = await chatFixture([origin]); });
 test.afterEach(async () => { await fixture.close(); });
-const open = async page => { await page.goto(`${origin}/paseo.html?daemon=${encodeURIComponent(fixture.server.url)}`); await expect(page.getByText('연결됨', { exact: true })).toBeVisible(); };
+const open = async page => { await page.goto(`${origin}/index.html?daemon=${encodeURIComponent(fixture.server.url)}`); await expect(page.getByText('연결됨', { exact: true })).toBeVisible(); };
 const send = async (page, text) => { await page.getByRole('textbox', { name: '메시지', exact: true }).fill(text); await page.getByRole('button', { name: '메시지 보내기', exact: true }).click(); };
 
 test('new Chat streams, follows up, changes fake model and restores its new history after reload', async ({ page }) => {
@@ -23,6 +23,28 @@ test('new Chat streams, follows up, changes fake model and restores its new hist
   await expect(page.locator('.message.user')).toHaveCount(2);
   await expect(page.getByRole('combobox', { name: 'Model', exact: true })).toHaveValue('fake-model');
   await page.screenshot({ path: '.worknaru-test/paseo-chat-desktop.png', fullPage: true });
+  await page.getByRole('button', { name: '새 대화', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: '메시지', exact: true })).toHaveValue('');
+});
+
+test('failed first creation keeps its draft with that chat and leaves a separate new draft empty', async ({ page }) => {
+  fixture.runtime.failCreationResponse = true;
+  await open(page); await send(page, '생성 실패 후 보관할 초안');
+  const input = page.getByRole('textbox', { name: '메시지', exact: true });
+  await expect(page.getByRole('button', { name: '대화 생성 결과 확인', exact: true })).toBeEnabled();
+  await expect(input).toHaveValue('생성 실패 후 보관할 초안');
+  await page.getByRole('button', { name: '새 대화', exact: true }).click();
+  await expect(input).toHaveValue('');
+  await input.fill('아직 보내지 않은 새 초안');
+  await page.getByRole('button').filter({ hasText: '생성 실패 후 보관할 초안' }).click();
+  await expect(input).toHaveValue('생성 실패 후 보관할 초안');
+  await page.getByRole('button', { name: '대화 생성 결과 확인', exact: true }).click();
+  await expect(page.getByRole('button', { name: '메시지 보내기', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: '메시지 보내기', exact: true }).click();
+  await expect(input).toHaveValue('');
+  expect(fixture.runtime.sends).toHaveLength(1);
+  await page.getByRole('button', { name: '새 대화', exact: true }).click();
+  await expect(input).toHaveValue('아직 보내지 않은 새 초안');
 });
 
 test('permission details sit above input; two tabs resolve one request; cancellation stays available', async ({ page, context }) => {
