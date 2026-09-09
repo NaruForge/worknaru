@@ -55,9 +55,13 @@ test('concurrent default changes reject the stale revision and unsupported defau
     await assert.rejects(f.service.updateSettings(current.revision, { model: 'missing-model', effort: 'low' }), { code: 'MODEL_UNSUPPORTED' });
     assert.deepEqual(f.service.settings(), current);
     f.runtime.catalog = async () => [];
-    await assert.rejects(f.service.create(randomUUID(), 'unsupported saved default'), { code: 'MODEL_UNSUPPORTED' });
+    const id = randomUUID();
+    await assert.rejects(f.service.create(id, 'unsupported saved default'), { code: 'MODEL_UNSUPPORTED' });
     assert.equal(f.runtime.createCalls.length, 0);
-    assert.equal(f.store.list().length, 0);
+    assert.equal(f.store.list().length, 1);
+    assert.equal((await f.service.get(id)).chat.status, 'creating');
+    await assert.rejects(f.service.recover(id), { code: 'MODEL_UNSUPPORTED' });
+    assert.equal(f.runtime.createCalls.length, 0);
   } finally { await f.close(); }
 });
 

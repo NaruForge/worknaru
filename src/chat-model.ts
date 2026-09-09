@@ -106,8 +106,11 @@ export class ChatModel {
         }
         return info;
       });
-      const [info, chats, view, settings] = await Promise.all([infoRequest, this.client.call('chats.list', {}),
-        selectedId ? this.client.call('chats.get', { chatId: selectedId }) : Promise.resolve(null), this.client.call('settings.get', {})]);
+      // Settings can be unavailable after a write failure while existing history remains readable.
+      const settingsRequest = this.client.call('settings.get', {}).then(settings => ({ settings, error: null }))
+        .catch(error => ({ settings: null, error: (error as Error).message }));
+      const [info, chats, view, settingsResult] = await Promise.all([infoRequest, this.client.call('chats.list', {}),
+        selectedId ? this.client.call('chats.get', { chatId: selectedId }) : Promise.resolve(null), settingsRequest]);
       if (revision !== this.revision || selectedId !== this.state.selectedId) return;
       let merged = view;
       if (view && this.state.view?.chat.id === view.chat.id && view.timeline.revision === this.state.view.timeline.revision) {
@@ -122,9 +125,10 @@ export class ChatModel {
         this.pendingInput = null; this.save();
       }
       if (merged) this.views.set(merged.chat.id, merged);
-      const currentSettings = this.state.settings && this.state.settings.revision > settings.revision ? this.state.settings : settings;
-      this.update({ info, chats, view: merged, viewLoading: false, settings: currentSettings, refreshError: null,
-        ...(!this.selectionOverridden ? { newSelection: currentSettings.defaults } : {}) });
+      const settings = settingsResult.settings;
+      const currentSettings = !settings || this.state.settings && this.state.settings.revision > settings.revision ? this.state.settings : settings;
+      this.update({ info, chats, view: merged, viewLoading: false, settings: currentSettings, refreshError: settingsResult.error,
+        ...(!this.selectionOverridden && currentSettings ? { newSelection: currentSettings.defaults } : {}) });
     } catch (error) {
       if (revision === this.revision && (error as { code?: string }).code === 'CHAT_NOT_FOUND') {
         this.select(null); this.refreshAgain = true;

@@ -47,6 +47,45 @@ test('failed first creation keeps its draft with that chat and leaves a separate
   await expect(input).toHaveValue('아직 보내지 않은 새 초안');
 });
 
+test('a failed creation catalog check keeps its draft accessible and recovery does not send it', async ({ page }) => {
+  await open(page);
+  await expect(page.getByRole('combobox', { name: 'Model', exact: true })).toBeEnabled();
+  const catalog = fixture.runtime.catalog.bind(fixture.runtime);
+  fixture.runtime.catalog = async () => { throw new Error('creation catalog unavailable'); };
+  await send(page, '모델 확인 실패에도 보관할 초안');
+  const input = page.getByRole('textbox', { name: '메시지', exact: true });
+  await expect(page.getByRole('button', { name: '대화 생성 결과 확인', exact: true })).toBeEnabled();
+  await expect(input).toHaveValue('모델 확인 실패에도 보관할 초안');
+  expect(fixture.runtime.createCalls).toHaveLength(0);
+  await page.getByRole('button', { name: '새 대화', exact: true }).click();
+  await input.fill('별도로 작성한 새 초안');
+  await page.getByRole('button').filter({ hasText: '모델 확인 실패에도 보관할 초안' }).click();
+  await expect(input).toHaveValue('모델 확인 실패에도 보관할 초안');
+  fixture.runtime.catalog = catalog;
+  await page.getByRole('button', { name: '대화 생성 결과 확인', exact: true }).click();
+  await expect(page.getByRole('button', { name: '메시지 보내기', exact: true })).toBeEnabled();
+  expect(fixture.runtime.sends).toHaveLength(0);
+  await page.getByRole('button', { name: '메시지 보내기', exact: true }).click();
+  await expect(input).toHaveValue('');
+  expect(fixture.runtime.sends).toHaveLength(1);
+  await page.getByRole('button', { name: '새 대화', exact: true }).click();
+  await expect(input).toHaveValue('별도로 작성한 새 초안');
+});
+
+test('settings storage failure still permits opening uncached existing history', async ({ page }) => {
+  const id = crypto.randomUUID();
+  const chat = await fixture.service.create(id, '장애 후 확인할 기존 기록');
+  const agentId = fixture.store.get(chat.id).agentId;
+  fixture.runtime.messages.get(agentId).push({ id: 'stored-answer', kind: 'assistant', text: '기록 저장 장애에도 읽을 수 있는 답변' });
+  await open(page);
+  fixture.store.db.exec("CREATE TRIGGER fail_settings_read_review BEFORE UPDATE ON chat_settings BEGIN SELECT RAISE(ABORT, 'disk failure'); END;");
+  await expect(fixture.service.updateSettings(0, { model: 'fake-model', effort: 'medium' })).rejects.toThrow();
+  await page.getByRole('button').filter({ hasText: '장애 후 확인할 기존 기록' }).click();
+  await expect(page.getByText('기록 저장 장애에도 읽을 수 있는 답변', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '메시지 보내기', exact: true })).toBeDisabled();
+  await expect(page.getByRole('alert')).toBeVisible();
+});
+
 test('permission details sit above input; two tabs resolve one request; cancellation stays available', async ({ page, context }) => {
   await open(page); await send(page, '[permission] 도구 확인');
   const other = await context.newPage(); await open(other);

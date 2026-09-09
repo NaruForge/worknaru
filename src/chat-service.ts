@@ -76,11 +76,9 @@ export class ChatService {
   }
   async create(id: string, title: string, selection?: Selection): Promise<Chat> {
     return this.serial(id, async () => {
-      this.requireConnection();
       const previous = this.persist(() => this.store.find(id));
       // Retrying an implicit-default creation uses its original selection, even if defaults changed.
       const chosen = selection ?? previous?.creation.selection ?? this.settings().defaults;
-      if (!previous) await this.validateSelection(chosen);
       const binding = this.persist(() => this.store.create(id, title, chosen));
       return this.createBinding(binding);
     });
@@ -90,6 +88,9 @@ export class ChatService {
   }
   private async createBinding(binding: ChatBinding): Promise<Chat> {
     if (!binding.agentId) {
+      // Persist the creation identity before an external check can fail, so its draft remains reachable.
+      // Recovery checks support too; it must never bypass validation or choose a fallback.
+      await this.validateSelection(binding.creation.selection);
       // The stored creation parameters and ID are reused even after a response or binding write is lost.
       const agent = await this.runtime.create(binding.id, binding.creation.title, binding.creation.selection);
       this.persist(() => this.store.bind(binding.id, agent.id));
