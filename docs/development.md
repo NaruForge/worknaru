@@ -72,7 +72,7 @@ npm start -- --data-dir .worknaru-dev --workspace .
 | --- | --- |
 | `workspaces.get` | 빈 params로 현재 허용된 Workspace를 조회한다. |
 | `sessions.create` | Workspace·제목과 요청 ID·epoch로 생성한다. |
-| `sessions.get` | Session ID로 정보와 `aiUnavailable`, `latestRunId`, `latestRunState`, `storageAvailable`을 조회한다. 최신 실행의 상세 본문은 `runs.get/watch`로 확인한다. |
+| `sessions.get` | Session ID로 정보와 `aiUnavailable`, `latestRunId`, `latestRunState`, `storageAvailable`, 선택한 `model`·`reasoningEffort`를 조회한다. 최신 실행의 상세 본문은 `runs.get/watch`로 확인한다. |
 | `sessions.list` | Workspace·선택적인 `after`·`limit`·`order`로 같은 요약 정보의 목록을 조회한다. 기본 `asc`는 기존 오름차순이고, `desc`는 최신 생성 순이다. `after: 0`에서 시작해 `nextAfter`를 같은 정렬의 다음 페이지에 사용한다. |
 | `messages.append` | Session·텍스트와 요청 ID·epoch로 저장한다. |
 | `messages.list` | Session·선택적인 `after`·`upTo`·`limit`으로 메시지를 조회한다. |
@@ -120,14 +120,14 @@ npm run chat -- --url ws://127.0.0.1:<port>/ws --session <sessionId> --text "앞
 
 클라이언트에서 Ctrl+C를 누르면 해당 실행의 취소를 요청한다. 클라이언트 연결만 끊기면 데몬은 실행을 계속한다. 데몬의 Ctrl+C는 새 요청을 막고 관리하는 에이전트를 정리한 뒤 저장소를 닫는다.
 
-기존 CLI의 `CODEX_HOME` 또는 기본 `.codex`에 있는 `auth.json`을 개발 데이터 안의 `codex/auth.json`으로 복사해 사용한다. 원본 CLI 설정·로그인은 변경하지 않는다. 에이전트 기록과 임시 파일도 개발 데이터 안에 둔다. 이 영역에는 인증정보와 대화 기록이 있으므로 Git에 추가하지 않는다. 별도의 로그인 UI나 자격증명 관리 기능은 제공하지 않는다.
+기존 CLI의 `CODEX_HOME` 또는 기본 `.codex`에 있는 `auth.json`을 개발 데이터 안의 `codex/auth.json`으로 시작 시 복사해 사용한다. 원본 CLI 설정·로그인은 변경하지 않는다. 에이전트 기록과 임시 파일도 개발 데이터 안에 둔다. 이 영역에는 인증정보와 대화 기록이 있으므로 Git에 추가하지 않는다. Settings는 이 사본을 사용하는 제공자의 인증 상태를 조회한다. 로그인·로그아웃·계정 전환 UI는 제공하지 않는다. 원본 CLI의 로그인 변경을 반영하려면 Daemon을 다시 실행한다.
 
 ### 실행 계약
 
 | 연산 | 입력과 결과 |
 | --- | --- |
 | `runs.start` | 변경 요청 ID·epoch와 `sessionId`, `text`를 받는다. Run·사용자 메시지·빈 답변 메시지·최초 접수 결과를 한 번에 커밋한다. 반환하는 `accepted`는 접수 확정이며 AI 완료를 뜻하지 않는다. |
-| `runs.get` | `runId`로 현재 상태, 저장된 답변 `text`, `revision`, `errorCode`, `stopReason`, `storageAvailable`을 조회한다. |
+| `runs.get` | `runId`로 현재 상태, 저장된 답변 `text`, `revision`, `errorCode`, `stopReason`, `storageAvailable`, 실행에 선택한 `model`·`reasoningEffort`, 전달 직전 제공자 확인 여부인 `modelConfirmed`(0 또는 1)를 조회한다. |
 | `runs.watch` | `runId`의 현재 스냅샷을 반환하고 그 뒤 커밋을 `run.changed`로 보낸다. 같은 이벤트 루프에서 조회·구독을 등록하므로 중간 커밋이 빠지지 않는다. |
 | `runs.unwatch` | 해당 연결의 Run 구독을 해제한다. |
 | `runs.cancel` | 변경 요청 ID·epoch와 `runId`를 받는다. `cancelling`을 저장하고 ACP 취소 및 프로세스 정리를 수행한다. 종료 확인 이후 `cancelled`를 저장한다. 이미 최종 상태인 Run은 유지한다. |
@@ -150,7 +150,7 @@ Windows 감독 프로세스가 이름이 있는 Job Object를 만들고, 에이�
 
 `sessions.get`의 `aiUnavailable: 0`은 새 실행을 접수할 수 있다는 뜻이며 재개 성공 보장은 아니다. `runs.start`의 접수 결과와 실제 재개·질문 실행을 구분한다. 재개 미지원은 `SESSION_RESUME_UNSUPPORTED`, 재개 거절·프로바이더 기록 없음은 `SESSION_RESUME_FAILED`, 30초 초과는 `SESSION_RESUME_TIMEOUT`으로 실패한다. 이때 새 질문의 `delivery`는 `not_attempted`이고 입력·빈 답변·실패 Run 및 기존 기록이 보존된다. UI는 재개 실패를 안내하며 새 대화를 시작할 수 있다. 실패·취소 후 해당 대화는 `aiUnavailable: 1`과 `SESSION_UNAVAILABLE`로 추가 실행을 막으며 재시작만으로 실패한 질문을 재시도하지 않는다. 정리까지 확인하지 못하면 `PROCESS_CLEANUP_UNKNOWN`이 우선한다.
 
-ACP 비활성 상태에서도 기록은 조회할 수 있다. 프로세스 정리·재개 자격 확인은 `--acp` 재시작에서 수행한다. 프로바이더 기록은 개발 데이터의 `codex` 하위에 있으므로 SQLite 파일만 복사해서는 맥락 재개를 보장하지 않는다. 저장 형식은 v2를 유지하며 별도 migration은 없다. 관련 작업: [#12 재실행 후 대화 이어가기](https://github.com/NaruForge/worknaru/issues/12).
+ACP 비활성 상태에서도 기록은 조회할 수 있다. 프로세스 정리·재개 자격 확인은 `--acp` 재시작에서 수행한다. 프로바이더 기록은 개발 데이터의 `codex` 하위에 있으므로 SQLite 파일만 복사해서는 맥락 재개를 보장하지 않는다. 현재 저장 형식은 설정 필드를 추가한 v3이며, 이전 대화의 모델 선택과 migration은 아래 Settings 절을 따른다. 관련 작업: [#12 재실행 후 대화 이어가기](https://github.com/NaruForge/worknaru/issues/12).
 
 ### 현재 한도와 검증 범위
 
@@ -158,11 +158,11 @@ ACP 비활성 상태에서도 기록은 조회할 수 있다. 프로세스 정�
 - 데몬당 열린 에이전트 연결은 최대 4개, 클라이언트당 Run 구독은 최대 16개다. 종료된 에이전트는 연결 수에서 제외하고 해당 Session을 사용 불가로 표시한다. 연결 해제 UI·유휴 정리 정책은 후속 범위이며 초기 연결은 정상 대화의 맥락 유지를 위해 유지한다.
 - 감독 프로세스 준비 15초, ACP 초기화·Session 생성·재개 각 30초, 질문 실행 120초의 한도를 적용한다. 정상 취소는 ACP 알림 뒤 프로세스 트리 정리까지 확인한다. 재개 중 취소는 준비 중인 프로세스를 정리하며 새 질문을 보내지 않는다. Job 조사·종료를 확인하지 못하면 성공으로 간주하지 않는다.
 - 텍스트 응답을 지시하고 셸·앱·플러그인 등 연결 기능을 끈 개발 설정으로 실행한다. ACP 파일·터미널 기능을 제공하거나 권한 요청을 자동 승인하지 않는다. 도구 이벤트는 `TOOLS_UNSUPPORTED`, 권한 요청은 `PERMISSION_UNSUPPORTED`로 실패 처리한다. 이 클라이언트 설정은 악성 에이전트를 격리하는 보안 경계가 아니며, 어댑터의 `read-only`라는 모드 이름도 실제 파일시스템 읽기 전용을 보장하지 않는다. 도구 실행·승인 UI는 후속 범위다.
-- 저장소 v1을 처음 열면 SQLite `VACUUM INTO`로 `records-v1-<uuid>.sqlite` 백업을 만든 다음 트랜잭션으로 v2로 전환한다. 메시지·최초 접수 결과·epoch를 유지한다. 지원 밖 형식이나 실패한 변경을 빈 DB로 대체하지 않는다. 사용자용 백업·복원 기능은 제공하지 않는다.
+- 저장소 v1을 처음 열면 SQLite `VACUUM INTO`로 `records-v1-<uuid>.sqlite` 백업을 만든 다음 트랜잭션으로 v2를 거쳐 현재 v3로 전환한다. v2의 백업·전환은 아래 Settings 절을 따른다. 메시지·최초 접수 결과·epoch를 유지한다. 지원 밖 형식이나 실패한 변경을 빈 DB로 대체하지 않는다. 사용자용 백업·복원 기능은 제공하지 않는다.
 
 `npm test`는 실제 SQLite와 별도 ACP 시험 프로세스로 중복·경쟁·스트리밍·취소·시작 중 취소·강제 종료·재시작·저장 장애·출력 및 프로토콜 한도·v1 변환·개발용 클라이언트를 검증한다. 시험용 에이전트 선택은 시험 진입점에만 있으며 제품 실행 옵션으로 노출하지 않는다.
 
-실제 Codex와의 확인은 별도로 실행하며 모델 요청을 발생시킨다. 기존 로그인이 있어야 한다. 첫 질문 후 데몬을 종료·재시작하고 같은 대화의 후속 질문으로 이전 답변의 맥락을 확인한다. 응답 스트리밍과 재시작 후 저장 기록도 비교한다. 시험이 생성한 데이터·인증 사본·프로세스는 종료 시 정리한다.
+실제 Codex와의 확인은 별도로 실행하며 모델 요청을 발생시킨다. 기존 로그인과 명시적인 `WORKNARU_CODEX_PATH`가 있어야 한다. `test:live`와 `test:web:live`는 이 환경 변수가 없으면 실제 검증을 건너뛴다. 두 시험 모두 `gpt-5.6-luna`·`low`를 실행 정책으로 고정하고, 다른 선택값이나 제공자의 미지원·적용 확인 실패를 질문 전달 전에 차단한다. 개인 CLI 기본값이나 화면 설정으로 시험 정책을 우회하지 않는다. 각 시험은 첫 질문 후 데몬을 종료·재시작하고 같은 대화의 후속 질문으로 이전 답변의 맥락을 확인하는 실제 요청 2회를 보낸다. 필요한 시험 하나를 명시적으로 실행하며 일반 `npm test`·`test:web`는 가짜 에이전트를 사용한다. 시험이 생성한 데이터·인증 사본·프로세스는 종료 시 정리한다.
 
 ```powershell
 $env:WORKNARU_CODEX_PATH = (Get-Command codex.exe).Source
@@ -219,3 +219,52 @@ npm run test:web:live
 브라우저 시험은 설치된 Microsoft Edge를 사용한다. 별도 ACP 시험 프로세스와 실제 Daemon으로 실행·취소·초안·IME·입력 한도·응답 유실 후 새로고침·기록 페이지·Daemon 재시작 후 대화 재개·모달 포커스·320/390/736px·테마를 확인한다. 저장 장애와 실행 종료 불명의 화면 표시는 WebSocket 응답 변형으로 검증하며 실제 SQLite 장애와 프로세스 정리는 기존 Daemon 시험이 맡는다. 실제 Codex 시험은 첫 응답 뒤 Daemon을 종료·재실행하고 같은 대화에서 임의 토큰을 다시 답하게 해 기존 맥락과 기록 중복 없음을 확인한다. 전체 데스크톱 컨테이너·스크린리더 조합·대용량 문서 편집 성능을 검증한 결과는 아니다.
 
 Windows의 예약 포트 범위 등으로 5173에서 `EACCES`가 발생하면 검증 시 `$env:WORKNARU_TEST_WEB_PORT = '15173'`처럼 사용 가능한 포트를 지정한다. `test:web`와 `test:web:live` 모두 화면 서버·허용 Origin·브라우저 주소를 함께 맞춘다. 기본값은 5173이며 자동으로 임의 포트로 바꾸지 않는다. 수동 실행에서는 `npm run dev:web -- --port 15173` 또는 `npm run preview:web -- --port 15173`와 Daemon의 `--origin http://127.0.0.1:15173`을 함께 사용한다.
+
+## Settings와 대화별 AI 설정
+
+관련 작업: [#14 Settings와 대화별 모델·추론 강도](https://github.com/NaruForge/worknaru/issues/14).
+
+좌측 서비스 탐색 하단의 **설정(Settings)** 에서 Daemon 연결 설정, Codex 인증 상태, 새 대화의 기본 Model·Reasoning Effort를 확인한다. 좁은 화면에서는 상단 서비스 버튼으로 Settings를 연다. 기존 상단 연결 상태 버튼도 연결 창을 연다. Permission은 **텍스트 대화 · 도구 실행 미지원** 상태만 표시한다. 로그인·로그아웃·계정 전환 및 도구 권한 변경은 구현 범위에 포함하지 않는다.
+
+기본값과 대화별 선택의 원본은 플랫폼 SQLite다. 초기 기본값은 `gpt-5.6-luna`·`low`이며 일반 대화에서는 지원 모델 중 직접 바꿀 수 있다. 기본값은 동일 데이터 영역에서 이후 생성하는 대화에만 복사한다. 기존 대화의 선택은 바뀌지 않는다. Chat 입력창에서 바꾸는 값은 해당 대화의 다음 메시지부터 적용하며, 실행 중에는 서버에서도 `SESSION_BUSY`로 변경을 거절한다. 모델을 바꿀 때 현재 추론 강도를 지원하면 유지하고, 지원하지 않으면 `low` 또는 제공자가 나열한 첫 지원값으로 전환한다.
+
+### 조회와 저장 계약
+
+| 연산 | 입력과 결과 |
+| --- | --- |
+| `ai.get` | 빈 params. ACP를 통해 확인한 `models`(각 `id`, `name`, `efforts`, `fallbackEffort`), `authentication`, `checkedAt`을 반환한다. |
+| `settings.get` | 빈 params. `selection: { model, reasoningEffort }`와 `storageAvailable`을 반환한다. ACP 비활성 상태에서도 조회할 수 있다. |
+| `settings.update` | 요청 ID·epoch와 `selection`으로 새 대화 기본값을 저장한다. 접수 결과는 `{ accepted, requestId, settings }`다. |
+| `sessions.configure` | 요청 ID·epoch와 `sessionId`, `selection`으로 해당 대화의 선택을 저장한다. 접수 결과는 `{ accepted, requestId, session }`이다. |
+
+설정 변경 전에 같은 Daemon에 `ai.get`을 호출해 제공자 목록을 확인한다. 미확인 목록은 `AI_CATALOG_REQUIRED`, 지원 밖 조합은 `MODEL_UNSUPPORTED`로 거절한다. 변경은 기존 요청 ID·epoch·접수 장부 규칙을 그대로 사용한다. 설정 저장과 접수 결과를 함께 커밋하며, 응답 유실 후 `requests.get`으로 확인한다. 최초 접수 스냅샷을 현재 설정으로 간주하지 않고 `settings.get` 또는 `sessions.get`을 다시 조회한다. 브라우저는 미확정 설정 요청도 같은 탭의 접수 장부에 보관하고 자동 재전송하지 않는다. 설정 변경은 작성 중인 메시지 초안을 지우지 않는다.
+
+```json
+{ "type": "request", "callId": "ai-1", "method": "ai.get", "params": {} }
+```
+
+목록 확인 후 기본값을 저장하는 예시다. 기존 대화를 바꿀 때는 method를 `sessions.configure`로 바꾸고 params에 실제 `sessionId`를 추가한다.
+
+```json
+{
+  "type": "request", "callId": "settings-1", "method": "settings.update",
+  "requestId": "save-default-model-1", "storeEpoch": "<storeEpoch>",
+  "params": { "selection": { "model": "gpt-5.6-luna", "reasoningEffort": "low" } }
+}
+```
+
+### 제공자 확인과 실행 적용
+
+`ai.get`은 설치된 `codex-acp` 1.10.0에 ACP 초기화 후 읽기 전용 `authentication/status` 확장을 요청한다. 인증된 경우 조회 전용 provider Session의 `configOptions`와 `session/set_config_option`으로 모델별 추론 강도를 확인한다. 이 세션에는 `session/prompt`를 보내지 않고, WorkNaru의 사용자 Session·메시지·Run을 만들지 않는다. provider Session ID를 별도로 보관해 같은 Workspace의 다음 조회에서 재개하고, 조회 후 `session/close`와 관리 프로세스 종료를 수행한다. 메타데이터 프로세스의 Job 이름도 시작 전에 저장하고 Daemon 재시작 때 정리한다. 조회용 provider 기록이 사라지면 현재 조회를 실패로 알리고 다음 명시적 조회에서 다시 만든다. Workspace를 바꾸면 그 Workspace의 조회용 Session을 생성한다. [ACP 어댑터](https://github.com/agentclientprotocol/codex-acp), [ACP 세션 설정](https://agentclientprotocol.com/protocol/v1/session-setup)
+
+동시 조회는 하나로 합치고 성공한 결과는 30초 동안 재사용한다. 전체 조회는 45초, 개별 ACP 요청은 15초 한도를 두며 프로세스 정리 시간은 별도다. 인증 결과는 `chatgpt`, `apiKey`, `other`, `signedOut` 중 하나만 화면에 전달한다. 이메일·토큰·계정 식별자를 반환하지 않는다. ‘로그인 정보 확인됨’은 현재 제공자가 인증 정보를 인식했다는 뜻이며, 원격 자격증명의 만료 여부나 잔여 사용량 검증을 뜻하지 않는다. 조회 실패는 `AI_INFO_UNAVAILABLE`로 알리고 사용자 대화나 질문을 생성하지 않는다. 인증되지 않은 경우 모델 목록은 비어 있으며 로그인부터 안내한다.
+
+사용자 Session을 새로 열거나 재개할 때 자식 프로세스의 `CODEX_CONFIG`에 선택한 `model`·`model_reasoning_effort`를 명시한다. ACP `configOptions`로 적용값을 읽고, 매 질문 전에 `session/set_config_option`으로 모델·추론 강도를 지정해 다시 확인한다. 선택이 같은 기존 연결도 이 확인을 생략하지 않는다. 모델·추론 강도가 지원되며 선택값과 일치한 것을 확인한 뒤에만 Run의 `delivery = attempting`, `modelConfirmed = 1`과 함께 질문을 전달한다. 제공자가 적용값을 반환하지 않거나 다른 값을 유지하면 `MODEL_UNCONFIRMED`, 지원하지 않으면 `MODEL_UNSUPPORTED`로 질문을 보내기 전에 실패한다. 실제 검증의 고정 정책 위반은 `TEST_MODEL_REQUIRED`다. `modelConfirmed`는 제공자의 설정 확인 결과이며 과금 내역 검증 필드는 아니다.
+
+선택 저장 완료와 제공자 적용 완료는 다르다. 화면은 실행 전 ‘다음 메시지에 적용’을 표시하고, 해당 선택값으로 실행한 기록에서 제공자 확인을 마치면 ‘최근 적용’을 표시한다. 재시작 후에도 저장된 대화 선택을 사용하며 기본값으로 덮어쓰지 않는다. 적용 실패 후에는 기존 실패·기록 보기 정책을 따른다. 입력·빈 답변·실패 Run은 남고 질문은 자동 재시도하지 않는다.
+
+### v3 저장 형식
+
+v3는 기본값·조회용 provider 식별자와 대화별 선택, Run별 선택·적용 확인을 추가한다. v2 데이터는 `records-v2-<uuid>.sqlite`에 일관된 백업을 만든 뒤 트랜잭션으로 전환한다. v1 데이터는 기존 v1 백업을 만든 뒤 v2·v3 변경을 순서대로 수행한다. 메시지·접수 장부·epoch는 유지한다.
+
+이전 형식에서 생성한 대화와 Run의 모델 필드는 `null`로 남긴다. 과거 실행 모델을 추정하거나 새 기본값을 소급하지 않는다. 기존 대화를 이어 쓰려면 UI에서 모델·추론 강도를 한 번 선택해야 하며, 선택 전 `runs.start`는 `AI_SETTINGS_REQUIRED`로 거절한다. 정상 완료·정리 확인 등 기존 재개 조건도 충족해야 한다.

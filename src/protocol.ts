@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { aiSelectionSchema } from './ai-settings.js';
 
 export const PROTOCOL_MAJOR = 1;
 export const MAX_MESSAGE_BYTES = 64 * 1024;
@@ -21,6 +22,10 @@ export const helloSchema = z.strictObject({
 });
 
 export const requestSchema = z.discriminatedUnion('method', [
+  z.strictObject({ ...base, method: z.literal('ai.get'), params: z.strictObject({}) }),
+  z.strictObject({ ...base, method: z.literal('settings.get'), params: z.strictObject({}) }),
+  z.strictObject({ ...mutation, method: z.literal('settings.update'), params: z.strictObject({ selection: aiSelectionSchema }) }),
+  z.strictObject({ ...mutation, method: z.literal('sessions.configure'), params: z.strictObject({ sessionId: uuid, selection: aiSelectionSchema }) }),
   z.strictObject({ ...mutation, method: z.literal('runs.start'), params: z.strictObject({ sessionId: uuid, text: textInput }) }),
   z.strictObject({ ...mutation, method: z.literal('runs.cancel'), params: z.strictObject({ runId: uuid }) }),
   z.strictObject({ ...base, method: z.literal('runs.get'), params: z.strictObject({ runId: uuid }) }),

@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import type { ChatState, ChatStateStore } from '../src/chat-state.js';
 import type { Run, Session } from '../src/web-client.js';
 import { Icon } from './icons.js';
+import { AiControls } from './ai-controls.js';
 
 const active = (run?: Run) => run && ['running', 'cancelling'].includes(run.state);
 const runLabel = (run?: Run) => !run ? '새 대화' : ({ running: '응답 중', cancelling: '중지 중', completed: '응답 완료', cancelled: '중지 완료', failed: '응답 실패' })[run.state];
@@ -29,6 +30,7 @@ function notice(state: ChatState, session?: Session, run?: Run): { title: string
   if (state.pending) return { title: state.busy ? (state.pending.method === 'runs.cancel' ? '중지 접수 확인 중' : '접수 확인 중') : '접수 여부를 확인해야 합니다', text: '같은 요청의 접수 기록을 조회합니다. 새 요청으로 자동 재전송하지 않습니다.', action: state.busy ? undefined : 'check' };
   if (session?.storageAvailable === false || run?.storageAvailable === false) return { title: '저장 상태를 확인할 수 없습니다', text: '마지막 저장 확인 내용만 표시합니다. Daemon의 저장 문제를 해결한 뒤 기록 상태를 확인해 주세요.', action: 'check' };
   if (run?.errorCode === 'PROCESS_CLEANUP_UNKNOWN') return { title: '실행 종료를 확인할 수 없습니다', text: '이 대화의 새 실행을 막았습니다. Daemon에서 종료가 확인될 때까지 기다려 주세요.', action: 'check' };
+  if (run?.errorCode && ['MODEL_UNCONFIRMED', 'MODEL_UNSUPPORTED', 'TEST_MODEL_REQUIRED'].includes(run.errorCode)) return { title: '모델 설정을 적용하지 못했습니다', text: '선택한 모델과 추론 강도를 확인하지 못해 질문을 전달하지 않았습니다. 입력과 기록은 보존됩니다. 설정을 확인하고 새 대화를 시작해 주세요.', action: 'new' };
   if (run?.errorCode?.startsWith('SESSION_RESUME_')) return { title: '기존 대화를 이어갈 수 없습니다', text: 'AI가 이전 대화를 불러오지 못해 새 질문을 전달하지 않았습니다. 입력과 저장된 기록은 남아 있습니다. 새 대화에서 시작해 주세요.', action: 'new' };
   if (run?.errorCode === 'AGENT_CAPACITY') return { title: 'AI 연결 한도에 도달했습니다', text: '현재 최대 4개 대화를 AI에 연결할 수 있습니다. 목록에서 연결이 유지된 다른 대화를 선택해 주세요.' };
   if (run?.state === 'cancelling') return { title: '중지 중', text: '중지 요청을 접수했습니다. 실제 실행이 끝나는지 확인하고 있습니다.' };
@@ -87,10 +89,13 @@ export function Chat({ state, model, reconnect }: { state: ChatState; model: Cha
         <textarea aria-label="메시지" placeholder={session ? '메시지를 입력하세요…' : '새 대화를 만든 뒤 메시지를 입력하세요'} value={draft} disabled={!session} rows={2}
           onChange={(event) => model.setDraft(event.target.value)} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
           onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && !composing.current && event.keyCode !== 229) { event.preventDefault(); if (!blocked && !tooLong) void model.send(); } }} />
-        <div className="compose-controls"><span className="model-label">{state.ready?.aiExecution ? 'Codex · 텍스트 대화' : 'AI 연결 대기'}</span><span className="spacer" />
+        <AiControls info={state.aiInfo} selection={session} disabled={!!blocked || state.aiLoading === true} change={(selection) => { if (session) void model.configure(selection, session.sessionId); }} />
+        <div className="compose-controls"><span className="model-label">{state.ready?.aiExecution ? 'Permission · 텍스트 대화' : 'AI 연결 대기'}</span><span className="spacer" />
           {active(run) ? <button className="primary" aria-label="응답 중지" disabled={state.connection !== 'online' || state.busy || !!state.pending || run?.state !== 'running' || run?.storageAvailable === false} onClick={() => void model.cancel()}><Icon name="stop" />중지</button>
-            : <button className="primary" aria-label="메시지 전송" disabled={!!blocked || tooLong || !draft.trim()} onClick={() => void model.send()}><Icon name="arrow" />전송</button>}
+            : <button className="primary" aria-label="메시지 전송" disabled={!!blocked || !session?.model || !session.reasoningEffort || tooLong || !draft.trim()} onClick={() => void model.send()}><Icon name="arrow" />전송</button>}
         </div>
+        {session && <p className="model-status">{!session.model ? '모델과 추론 강도를 선택해 주세요.' : run?.modelConfirmed === 1 && run.model === session.model && run.reasoningEffort === session.reasoningEffort ? `최근 적용: ${run.model} · ${run.reasoningEffort}` : '선택값은 다음 메시지에 적용됩니다.'}</p>}
+        {state.aiError && <button className="settings-action small" disabled={state.aiLoading || state.connection !== 'online'} onClick={() => void model.refreshAi()}>모델 목록 다시 확인</button>}
       </div>
       {tooLong ? <p className="error-text small" role="alert">입력이 UTF-8 16KiB를 넘었습니다. 내용을 줄여 주세요.</p> : <p className="compose-help">Enter 전송 · Shift + Enter 줄바꿈{active(run) ? ' · 응답 중에는 다음 질문의 초안을 작성할 수 있습니다.' : ''}</p>}
     </div>

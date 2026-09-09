@@ -19,7 +19,7 @@ test('browser resumes real Codex context after daemon restart without duplicatin
   const server = await preview({ preview: { port: webPort, host: '127.0.0.1', strictPort: true } });
   f.cleanups.push(() => new Promise((resolve) => server.httpServer.close(resolve)));
   const options = { projectRoot, dataDirectory: f.data, workspaceDirectory: f.workspace, token: f.token,
-    acp: { codexPath: process.env.WORKNARU_CODEX_PATH }, origins: [origin],
+    acp: { codexPath: process.env.WORKNARU_CODEX_PATH, requiredSelection: { model: 'gpt-5.6-luna', reasoningEffort: 'low' } }, origins: [origin],
   };
   let daemon = await startDaemon(options);
   f.cleanups.push(() => daemon.close());
@@ -43,6 +43,7 @@ test('browser resumes real Codex context after daemon restart without duplicatin
   await page.locator('.run-state').filter({ hasText: '응답 완료' }).waitFor({ timeout: 130_000 });
   const output = await page.getByRole('article', { name: 'AI 메시지' }).locator('.message-text').innerText();
   assert.equal(output.trim(), marker);
+  assert.equal(await page.locator('.model-status').innerText(), '최근 적용: gpt-5.6-luna · low');
   const port = Number(new URL(daemon.url).port);
   await daemon.close();
   daemon = await startDaemon({ ...options, port });
@@ -56,6 +57,7 @@ test('browser resumes real Codex context after daemon restart without duplicatin
   assert.equal(await page.getByRole('article', { name: 'AI 메시지' }).count(), 2);
   assert.equal(await page.getByRole('article', { name: '내 메시지' }).count(), 2);
   assert.equal((await page.getByRole('article', { name: 'AI 메시지' }).nth(1).locator('.message-text').innerText()).trim(), marker);
+  assert.equal(await page.locator('.model-status').innerText(), '최근 적용: gpt-5.6-luna · low');
   await page.screenshot({ path: '.worknaru-test/chat-resumed-live-codex.png' });
   assert.deepEqual(errors, []);
 });

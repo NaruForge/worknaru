@@ -13,7 +13,7 @@ import type { AcpOptions } from './acp.js';
 const MAX_CLIENTS = 16;
 const MAX_OUTPUT_BYTES = 256 * 1024;
 const MAX_BUFFER_BYTES = 512 * 1024;
-const METHODS = ['workspaces.get', 'sessions.create', 'sessions.get', 'sessions.list', 'messages.append', 'messages.list', 'requests.get'];
+const METHODS = ['workspaces.get', 'sessions.create', 'sessions.get', 'sessions.list', 'messages.append', 'messages.list', 'requests.get', 'settings.get'];
 
 export type DaemonOptions = {
   projectRoot: string;
@@ -54,7 +54,7 @@ export async function startDaemon(options: DaemonOptions) {
     }
     if (!runtime) store.recoverUndelivered();
   } catch (error) { store.close(); throw error; }
-  const methods = runtime ? [...METHODS, 'runs.start', 'runs.cancel', 'runs.get', 'runs.watch', 'runs.unwatch'] : [...METHODS, 'runs.get', 'runs.watch', 'runs.unwatch'];
+  const methods = runtime ? [...METHODS, 'ai.get', 'settings.update', 'sessions.configure', 'runs.start', 'runs.cancel', 'runs.get', 'runs.watch', 'runs.unwatch'] : [...METHODS, 'runs.get', 'runs.watch', 'runs.unwatch'];
   const instanceId = randomUUID();
   const token = Buffer.from(options.token);
   const server = createServer((_request, response) => {
@@ -141,7 +141,15 @@ export async function startDaemon(options: DaemonOptions) {
       try {
         if (stopping) throw new AppError('DAEMON_STOPPING', '데몬을 종료하고 있습니다.');
         if (!methods.includes(parsed.data.method)) throw new AppError('METHOD_NOT_SUPPORTED', '지원하지 않는 기능입니다.');
-        const result = store.handle(parsed.data);
+        if (parsed.data.method === 'ai.get') {
+          const callId = parsed.data.callId;
+          void runtime!.metadata().then(
+            (result) => send(socket, { type: 'response', callId, ok: true, result }),
+            (error: unknown) => send(socket, { type: 'response', callId, ok: false, error: publicError(error) }),
+          );
+          return;
+        }
+        const result = store.handle(parsed.data, runtime?.validateSelection);
         if (parsed.data.method === 'runs.watch') {
           const watched = subscriptions.get(socket) ?? new Set<string>();
           if (watched.size >= 16 && !watched.has(parsed.data.params.runId)) throw new AppError('SUBSCRIPTION_LIMIT', '실행 구독 한도에 도달했습니다.');

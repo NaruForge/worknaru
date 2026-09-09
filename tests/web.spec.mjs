@@ -198,3 +198,85 @@ test('storage fault and unknown cleanup keep last confirmed text and prevent new
   await expect(page.locator('.run-state')).toHaveText('응답 완료');
   await expect(page.getByRole('button', { name: '메시지 전송' })).toBeEnabled();
 });
+
+test('Settings defaults and per-conversation choices remain separate, persist on restart and fit mobile screens', async ({ page, daemon, records }) => {
+  await login(page, daemon, records);
+  await newSession(page);
+  await expect(page.getByLabel('Model', { exact: true })).toBeEnabled({ timeout: 15_000 });
+  await page.getByRole('textbox', { name: '메시지', exact: true }).fill('설정 중에도 유지할 초안');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+  await expect(settings.getByText('ChatGPT 로그인 정보 확인됨')).toBeVisible();
+  await expect(settings).not.toContainText('private-not-for-ui');
+  await settings.getByLabel('기본 Model', { exact: true }).selectOption('gpt-5.6-sol');
+  await expect(settings.getByLabel('기본 Model', { exact: true })).toHaveValue('gpt-5.6-sol');
+  await settings.getByLabel('기본 Reasoning Effort', { exact: true }).selectOption('high');
+  await expect(settings.getByLabel('기본 Reasoning Effort', { exact: true })).toHaveValue('high');
+  await page.screenshot({ path: '.worknaru-test/settings-desktop.png' });
+  await settings.getByRole('button', { name: 'Settings 닫기' }).click();
+  await expect(page.getByLabel('Model', { exact: true })).toHaveValue('gpt-5.6-luna');
+  await expect(page.getByRole('textbox', { name: '메시지', exact: true })).toHaveValue('설정 중에도 유지할 초안');
+  await newSession(page);
+  await expect(page.getByLabel('Model', { exact: true })).toHaveValue('gpt-5.6-sol');
+  await expect(page.getByLabel('Reasoning Effort', { exact: true })).toHaveValue('high');
+  await send(page, '설정 뒤에도 같은 맥락');
+  await expect(page.locator('.run-state')).toHaveText('응답 완료');
+  await expect(page.locator('.model-status')).toContainText('최근 적용: gpt-5.6-sol · high');
+  await page.getByLabel('Model', { exact: true }).selectOption('gpt-5.6-luna');
+  await expect(page.getByLabel('Model', { exact: true })).toHaveValue('gpt-5.6-luna');
+  await page.getByLabel('Reasoning Effort', { exact: true }).selectOption('low');
+  await expect(page.getByLabel('Reasoning Effort', { exact: true })).toHaveValue('low');
+  await expect(page.locator('.model-status')).toContainText('다음 메시지에 적용');
+  await send(page, 'recall-first');
+  await expect(page.locator('.run-state')).toHaveText('응답 완료');
+  await expect(page.getByRole('article', { name: 'AI 메시지' }).last()).toContainText('답변 2: 설정 뒤에도 같은 맥락');
+  await expect(page.locator('.model-status')).toContainText('최근 적용: gpt-5.6-luna · low');
+  await page.screenshot({ path: '.worknaru-test/chat-model-settings.png' });
+  await daemon.stop();
+  const restarted = await launch(records, { entry: join(projectRoot, 'tests/acp-daemon.mjs'), extraArgs: ['--origin', origin] });
+  await login(page, restarted, records);
+  await expect(page.getByLabel('Model', { exact: true })).toHaveValue('gpt-5.6-luna');
+  await send(page, 'recall-first');
+  await expect(page.locator('.run-state')).toHaveText('응답 완료');
+  await expect(page.getByRole('article', { name: 'AI 메시지' }).last()).toContainText('답변 3: 설정 뒤에도 같은 맥락');
+  await page.setViewportSize({ width: 320, height: 850 });
+  await page.getByRole('button', { name: '서비스 열기' }).click();
+  await page.getByRole('dialog', { name: '서비스', exact: true }).getByRole('button', { name: 'Settings', exact: true }).click();
+  await expect(settings.getByLabel('기본 Model', { exact: true })).toHaveValue('gpt-5.6-sol');
+  await expect(settings.getByLabel('기본 Reasoning Effort', { exact: true })).toHaveValue('high');
+  for (let i = 0; i < 10; i++) await page.keyboard.press('Tab');
+  expect(await page.evaluate(() => !!document.activeElement.closest('dialog'))).toBe(true);
+  expect(await settings.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await page.screenshot({ path: '.worknaru-test/settings-mobile.png' });
+  await page.keyboard.press('Escape');
+  await send(page, 'wait');
+  await expect(page.getByLabel('Model', { exact: true })).toBeDisabled();
+  await expect(page.getByLabel('Reasoning Effort', { exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: '응답 중지' }).click();
+  await expect(page.locator('.run-state')).toHaveText('중지 완료');
+});
+
+test('a lost setting response is recovered after reload without creating a model turn', async ({ page, daemon, records }) => {
+  let drop = true;
+  let configureId;
+  await page.routeWebSocket(daemon.url, (socket) => {
+    const server = socket.connectToServer();
+    socket.onMessage((text) => { const value = JSON.parse(text); if (value.method === 'settings.update') configureId = value.callId; server.send(text); });
+    server.onMessage((text) => {
+      const value = JSON.parse(text);
+      if (drop && configureId && value.type === 'response' && value.callId === configureId) { drop = false; socket.close(); server.close(); }
+      else socket.send(text);
+    });
+  });
+  await login(page, daemon, records);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await expect(page.getByLabel('기본 Model', { exact: true })).toBeEnabled({ timeout: 15_000 });
+  await page.getByLabel('기본 Model', { exact: true }).selectOption('gpt-5.6-sol');
+  await expect(page.getByRole('button', { name: '연결 끊김', exact: true })).toBeVisible();
+  await login(page, daemon, records);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await expect(page.getByLabel('기본 Model', { exact: true })).toHaveValue('gpt-5.6-sol');
+  expect(await page.evaluate(() => sessionStorage.length)).toBe(0);
+  const events = readFileSync(join(records.root, 'agent.log'), 'utf8').trim().split('\n').map(JSON.parse);
+  expect(events.filter((event) => ['new', 'prompt'].includes(event.type))).toHaveLength(0);
+});
