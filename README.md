@@ -30,8 +30,12 @@ UI 소스 변경은 자동 반영됩니다. Daemon 코드를 바꾸면 Ctrl+C로
 | 실행·UI 점검 | `npm run dev` |
 | 타입 검사 | `npm run typecheck` |
 | 빌드와 제품 동작 시험 | `npm test` |
-| 브라우저 동작 시험 | `npm run test:web` |
+| 브라우저 전체 시험(동작·시각 기준) | `npm run test:web` |
+| 브라우저 동작 시험 | `npm run test:web:behavior` |
+| 고정 환경의 시각 기준 시험 | `npm run test:web:visual` |
 | UI 없는 계약·runtime 시험 | `npm run test:daemon` |
+
+브라우저 동작 시험에는 Windows와 Edge가 필요합니다. 시각 시험은 [기준 환경과 갱신 안내](docs/development.md#브라우저-동작과-시각-기준-검증)의 OS·Edge·폰트 조건까지 일치해야 합니다.
 
 ### 독립 실행과 UI 없는 호출
 

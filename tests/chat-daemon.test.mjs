@@ -8,9 +8,44 @@ import { join } from 'node:path';
 import { WebSocket } from 'ws';
 import { ChatConnection } from '../dist/chat-connection.js';
 import { chatFixture } from './chat-fixture.mjs';
+import { PaseoChatRuntime } from '../dist/paseo-chat-runtime.js';
 const selection = { model: 'gpt-5.6-luna', effort: 'low' };
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const connect = async url => { const client = new ChatConnection(url, url => new WebSocket(url), false); await client.connect(); return client; };
+
+test('headless input never dispatches when the real adapter cannot verify message history', async () => {
+  const f = await chatFixture();
+  const client = await connect(f.server.url);
+  try {
+    const chatId = randomUUID(), messageId = randomUUID();
+    await client.call('chats.create', { id: chatId, title: 'lookup failure', selection });
+    let page;
+    const adapter = new PaseoChatRuntime({ connection: () => () => {}, history: async () => {
+      if (page instanceof Error) throw page;
+      return page;
+    } });
+    f.runtime.locateMessage = adapter.locateMessage.bind(adapter);
+    for (const [failure, code] of [[{ error: 'offline' }, 'HISTORY_UNAVAILABLE'],
+      [{ staleCursor: true }, 'HISTORY_CHANGED'], [{ gap: true }, 'HISTORY_CHANGED'],
+      [{ hasOlder: true }, 'HISTORY_CHANGED']]) {
+      page = { epoch: 'epoch', entries: [], hasOlder: false, ...failure };
+      await assert.rejects(client.call('messages.send', { chatId, messageId, text: 'not sent' }), { code });
+      assert.equal(f.runtime.sends.length, 0);
+      assert.equal(f.store.get(chatId).pendingMessageId, null);
+    }
+    page = new Error('connection lost');
+    await assert.rejects(client.call('messages.send', { chatId, messageId, text: 'not sent' }), { code: 'HISTORY_UNAVAILABLE' });
+    assert.equal(f.runtime.sends.length, 0);
+    assert.equal(f.store.get(chatId).pendingMessageId, null);
+    page = { epoch: 'epoch', hasOlder: false,
+      entries: [{ turnId: 'old-turn', item: { type: 'user_message', clientMessageId: messageId } }] };
+    await assert.rejects(client.call('messages.send', { chatId, messageId, text: 'duplicate' }), { code: 'MESSAGE_ALREADY_SENT' });
+    assert.equal(f.runtime.sends.length, 0);
+    page = { epoch: 'epoch', entries: [], hasOlder: false };
+    assert.equal((await client.call('messages.send', { chatId, messageId: randomUUID(), text: 'new input' })).accepted, true);
+    assert.equal(f.runtime.sends.length, 1);
+  } finally { client.close(); await f.close(); }
+});
 
 test('headless default settings notify other clients and a lost reply is resolved by reading', async () => {
   const f = await chatFixture(), clients = []; let release;

@@ -202,6 +202,16 @@ WorkNaru SQLite에는 대화와 Agent의 연결, 생성 요청의 재식별 정�
 
 생성은 안정적인 ID와 요청 저장 → `idempotencyKey`로 Agent 생성(`initialPrompt` 없음) → Agent 연결 저장 → 별도 `messageId` 입력 순서다. 생성 응답이나 연결 저장 실패는 `chats.recover`에서 같은 생성 식별자로 확인한다. 입력·권한 응답 결과가 불명확하면 자동 재전송하지 않고 현재 상태와 기록을 조회한다.
 
+`messages.send`는 전송 전에 native 입력 이력을 조회해 이미 전달한 `messageId`를 `MESSAGE_ALREADY_SENT`로 거절한다. 이력 조회 실패는 `HISTORY_UNAVAILABLE`, 기록 공백·세대 변경·끝까지 조회할 수 없는 페이지나 실행 식별자 누락은 `HISTORY_CHANGED`다. 이 경우 새 입력을 저장·전송하지 않으며, 조회 실패를 입력 미존재로 처리하지 않는다. 정상적으로 이력 조회를 마친 뒤에만 새 ID를 접수한다. 같은 조회는 미확정 입력 복구에도 사용하며, 조회 오류가 기존 입력의 미전달을 증명하지는 않는다.
+
+UI 없는 WS 호출에서도 아래 요청의 오류는 `reply.error.code`로 확인한다. RPC 도구는 오류 메시지와 실패 종료 코드로 표시한다. `chatId`는 실제 대화 UUID, `messageId`는 이번 입력에 정한 UUID를 사용한다.
+
+```json
+{"method":"messages.send","params":{"chatId":"대화 UUID","messageId":"입력 UUID","text":"질문"}}
+```
+
+이를 `.worknaru-test/request.json`에 저장해 `npm run rpc -- --file .worknaru-test/request.json`으로 호출한다. 오류가 나면 `chats.get`으로 기록을 다시 조회하고 원인을 확인한다. 결과 불명 오류와 구분하며 자동 재전송하지 않는다. 관련 회귀 시험은 `tests/chat-daemon.test.mjs`가 실제 Paseo 연결부에 조회 오류를 주입해 WS 오류·전송 0회·미접수를 검사한다.
+
 첫 생성의 모델 조회·지원 검증도 요청 식별자를 저장한 뒤 수행한다. 이 검증이 실패하면 Agent나 입력을 만들지 않고 생성 중 대화와 앱 안의 초안을 유지한다. `chats.recover` 역시 저장된 선택의 지원 여부를 다시 검사한다. 지원하지 않는 선택은 자동 변경하지 않으며, 기존 초안을 확인·복사해 지원하는 선택의 새 대화에서 이어갈 수 있다. 설정 저장 장애가 발생해도 성공한 기존 대화·기록 조회는 표시하며 새 입력은 차단한다.
 
 Daemon은 대화별 짧은 접수 구간을 직렬화한다. 실행·승인·취소·결과 불명 상태에서는 새 입력을 거절하고, 실행 전체 동안 접수 잠금을 유지하지 않아 취소·권한 응답은 사용할 수 있다. 두 client의 입력·승인도 같은 판정을 받는다. 모델·추론 변경은 유휴 상태에서만 적용하고 실제 설정을 다시 확인한다. 부분 실패에서는 실제 표시값을 확인·재설정하기 전까지 입력을 막는다.
@@ -216,12 +226,34 @@ native `idle`, 마지막 답변, timeout은 성공·취소 완료 증거가 아�
 npm run typecheck
 npm run test:daemon  # UI 빌드·Vite 없이 계약과 실제 runtime 기동 검사
 npm test            # 전체 빌드, 저장·경쟁·제품·개발 실행과 프로세스 소유 검사
-npm run test:web    # Edge의 새 Chat과 공통 control·디자인 시안 검사
+npm run test:web    # Edge의 동작 시험과 고정 환경의 시각 시험 모두 실행
 ```
 
 기본 브라우저 시험 포트는 `15174`이며 충돌 시 `WORKNARU_TEST_WEB_PORT`를 지정한다. 시험 데이터·브라우저 profile은 `.worknaru-test` 아래에 둔다. fake 시험은 실제 SQLite 저장 실패, 생성/전달/승인 응답 유실, 두 client의 경쟁, 부분 설정, 재접속과 재시작을 검사한다. 별도 프로세스 시험은 정상·강제 종료, 자식 프로세스 정리, 포트 충돌, 같은 새 데이터로 재기동과 UI 없는 동일 API를 확인한다.
 
 새 계약을 바꾸면 `tests/chat-daemon.test.mjs`의 UI 없는 WS/RPC 호출과 `tests/chat-service.test.mjs`의 저장·재시작·충돌·실패 시험을 함께 갱신하고 `npm run test:daemon`을 통과시킨다. Settings·모델 조회 복구·긴 대화·모바일 탐색은 `tests/chat-web.spec.mjs`의 실제 제품 경로에서 검사한다. `design-prototype`·공통 control 시험은 시안/공통 표현 검증이며 제품 기능 지원의 증거로 대신하지 않는다.
+
+### 브라우저 동작과 시각 기준 검증
+
+Windows와 설치된 Microsoft Edge를 사용한다. 일반 동작 시험은 OS·Edge 전체 버전과 폰트 해시의 일치를 요구하지 않는다. `@visual` 태그는 기준 이미지 비교 시험만 구분하며, 동작·접근성·크기·대비 검사는 일반 동작 시험에 남는다.
+
+```powershell
+npm run test:web:behavior  # 일반 제품·control·시안 동작
+npm run test:web:visual    # 고정 환경의 기준 이미지 비교
+```
+
+둘을 합한 것이 `npm run test:web`의 검증 범위다. 전체 명령은 환경 불일치 때 시각 시험을 생략하거나 통과로 처리하지 않는다. 시각 환경을 준비하지 못한 개발자는 동작 시험 결과와 시각 시험 미완료를 별도로 PR에 기록한다.
+
+시각 환경의 원본은 [`tests/visual-environment.json`](../tests/visual-environment.json)이다. OS release, Edge 전체 버전과 Segoe UI·맑은 고딕 폰트 파일의 SHA-256이 모두 일치해야 한다. 아래의 과거 실행 기록은 필수 환경 설정의 원본이 아니다. viewport·locale·시간대·배율은 [`playwright.config.ts`](../playwright.config.ts), 비교 방식은 [`tests/visual-baseline.mjs`](../tests/visual-baseline.mjs)를 따른다.
+
+환경 불일치 오류에는 실제 값과 기준값의 차이가 나온다. 먼저 기준 환경의 PC에서 실행할 수 있는지 확인한다. Edge·Windows·폰트를 바꿀 필요가 생겼다면 해당 변경을 설명하고 [Design System의 이미지 검토 기준](design/design-system.md)에 따라 새 기준을 검토한다. 실패를 없애기 위해 환경 검사를 제거하거나 baseline을 자동 갱신하지 않는다.
+
+기준 갱신 작업이 승인된 경우에만 다음 순서로 진행한다.
+
+1. 기존 환경·이미지를 보존하고, 환경 차이와 변경 이유를 PR에 기록한다. 오류에 표시된 실제 환경 전체를 확인해 `visual-environment.json`을 갱신한다.
+2. `npm run test:web:visual -- --update-snapshots`로 후보 이미지를 생성한다. 환경 JSON을 갱신하지 않으면 이 명령도 환경 검사에서 실패한다.
+3. `tests/control-contracts.spec.mjs-snapshots/`의 전후 이미지를 사람이 비교하고 사용자 선택을 확인한다. 생성·자동 통과만으로 승인하지 않는다.
+4. 승인된 환경 JSON과 이미지를 함께 커밋하고, 갱신 옵션 없이 `npm run test:web`을 실행한다. 의도하지 않은 변경은 원인을 해결한 뒤 다시 비교한다.
 
 ### 실제 AI 응답 검증
 
@@ -236,6 +268,8 @@ npm run test:live:paseo      # 첫 입력·후속 입력·취소 3회
 ```
 
 기본 시험은 모델을 호출하지 않는다. 실제 시험은 환경변수로 명시적으로 켠다. 매 입력을 보낼 때 catalog와 native 적용 모델·추론 값을 재확인한다. UI 선택값만 검사하지 않는다. 제품 실검증은 파일 읽기 도구, headless 후속 입력, UI 허용으로 지정 파일 생성, 재시작 후 UI 거절로 기존 파일 무변경, UI 취소를 확인한다. 개인 Paseo/Codex 설정·인증 hash 무변경과 소유 runtime 종료도 확인한다.
+
+좁은 runtime 실검증도 취소 직전에 `tests/live-cancel.mjs`에서 `gpt-5.6-luna / low`의 지원과 native 실제 적용값을 다시 확인한다. 확인 실패 시 취소 동작 전에 시험을 중단하고 소유 runtime을 정리한다. 성공한 확인은 같은 시나리오·입력 ID·호출 횟수에 `action: cancel`, `result: guarded action`으로 기록하며, 이 확인은 추가 AI 입력 횟수에 포함하지 않는다. `tests/paseo-runtime.test.mjs`는 지원 소멸·실효값 변경을 fake로 주입해 취소 0회와 확인→기록→취소 순서를 검사한다. 이 제한은 시험 전용이며 제품의 일반 취소 기능에는 적용하지 않는다.
 
 2026-09-09 Windows `10.0.26200`, Node `24.18.0`, npm `11.14.1`, Codex CLI `0.153.4`에서 runtime 3회·제품 5회 시나리오가 통과했다. 실행 파일은 `C:\Users\swBaek\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe`였다. 패키지 또는 외부 executable 변경 시 해당 환경을 다시 기록하고 관련 시험을 수행한다.
 
