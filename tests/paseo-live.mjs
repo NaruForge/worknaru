@@ -7,6 +7,7 @@ import { homedir, release } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { PaseoRuntime } from '../dist/paseo-runtime.js';
 import { deadline } from '../dist/owned-process.js';
+import { cancelLiveTurn } from './live-cancel.mjs';
 
 const selection = Object.freeze({ model: 'gpt-5.6-luna', effort: 'low' });
 const live = process.env.WORKNARU_LIVE === '1';
@@ -45,7 +46,7 @@ test('private Paseo: guarded first/follow-up responses, cancellation and cleanup
       });
     });
     await runtime.send(agentId, prompt, messageId, selection);
-    if (cancel) await runtime.cancel(agentId);
+    if (cancel) await cancelLiveTurn(runtime, agentId, action => record({ scenario, messageId, call: count, ...action }));
     const terminal = await deadline(finished, 60_000, 'No matching native turn completion event.');
     assert.equal(terminal.type, cancel ? 'turn_canceled' : 'turn_completed');
     const started = events.slice(start).find(event => event.type === 'agent_stream' && event.event.type === 'turn_started');

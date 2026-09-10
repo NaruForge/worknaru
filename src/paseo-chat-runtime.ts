@@ -105,14 +105,22 @@ export class PaseoChatRuntime implements ChatRuntime {
       before: result.startCursor ? Buffer.from(JSON.stringify(result.startCursor)).toString('base64url') : null, hasOlder: result.hasOlder };
   }
   async locateMessage(agentId: string, messageId: string): Promise<string | null> {
+    const unavailable = () => new ChatError('HISTORY_UNAVAILABLE', '입력 이력을 확인하지 못했습니다. 연결과 기록을 확인하세요.');
     let cursor: { epoch: string; seq: number } | undefined;
     do {
-      const page = await this.native.history(agentId, { projection: 'canonical', limit: 1000, ...(cursor ? { cursor, direction: 'before' } : {}) });
-      if (page.error || page.staleCursor || page.gap) return null;
+      const page = await this.native.history(agentId, { projection: 'canonical', limit: 1000, ...(cursor ? { cursor, direction: 'before' } : {}) })
+        .catch(() => { throw unavailable(); });
+      if (page.error) throw unavailable();
+      if (page.staleCursor || page.gap || (cursor && page.epoch !== cursor.epoch))
+        throw new ChatError('HISTORY_CHANGED', '입력 이력이 변경돼 중복 여부를 확인하지 못했습니다. 기록을 다시 조회하세요.');
       const match = page.entries.find(entry => entry.item.type === 'user_message' && (entry.item.clientMessageId ?? entry.item.messageId) === messageId);
       if (match?.turnId) return match.turnId;
-      const next = page.hasOlder ? page.startCursor ?? undefined : undefined;
-      if (next?.seq === cursor?.seq && next?.epoch === cursor?.epoch) return null;
+      // An incomplete scan cannot prove that an input was never delivered.
+      if (match) throw new ChatError('HISTORY_CHANGED', '입력의 실행 식별자를 확인하지 못했습니다. 기록을 확인하세요.');
+      if (!page.hasOlder) return null;
+      const next = page.startCursor;
+      if (!next || next.epoch !== page.epoch || !Number.isSafeInteger(next.seq) || next.seq < 1 || (cursor && next.seq >= cursor.seq))
+        throw new ChatError('HISTORY_CHANGED', '이전 입력 이력을 끝까지 확인하지 못했습니다. 기록을 다시 조회하세요.');
       cursor = next;
     } while (cursor);
     return null;

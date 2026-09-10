@@ -104,7 +104,7 @@ test('representative Main Colors preserve actual DOM error and focus contrast',a
 });
 
 for(const mode of ['light','dark']) for(const state of ['normal','error','disabled','running']) {
-  test(`control baseline ${mode} ${state}`,async({page,browser})=>{
+  test(`control baseline ${mode} ${state}`, { tag: '@visual' }, async({page,browser})=>{
     await page.goto(`${url}&mode=${mode}&state=${state}`);
     await expect(page.getByRole('textbox',{name:'자료 제목'})).toBeVisible();
     await page.evaluate(()=>document.fonts.ready);

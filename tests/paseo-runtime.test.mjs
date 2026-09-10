@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { isBearerTokenValid } from '@getpaseo/server';
 import { privatePaseoConfig } from '../dist/paseo-config.js';
 import { PaseoRuntime, privateRuntimeEnvironment } from '../dist/paseo-runtime.js';
+import { cancelLiveTurn } from './live-cancel.mjs';
 
 const root = process.cwd();
 function fixture() {
@@ -58,6 +59,32 @@ test('live-test dispatch rejects another model or unconfirmed effective effort b
   await assert.rejects(runtime.send('agent', 'not called', randomUUID(), { model: 'gpt-6-astra', effort: 'low' }), /TEST_MODEL_REQUIRED/);
   await assert.rejects(runtime.send('agent', 'not called', randomUUID(), { model: 'gpt-5.6-luna', effort: 'low' }), /MODEL_UNCONFIRMED/);
   assert.equal(calls, 0);
+});
+
+test('live cancellation rechecks support and effective selection before recording and cancelling', async () => {
+  let supported = true, effort = 'low';
+  const calls = [], records = [];
+  const client = {
+    async listProviderModels() { calls.push('catalog'); return { models: supported
+      ? [{ id: 'gpt-5.6-luna', thinkingOptions: [{ id: 'low' }] }] : [] }; },
+    async fetchAgent() { calls.push('inspect'); return { agent: {
+      runtimeInfo: { model: 'gpt-5.6-luna', thinkingOptionId: effort }, effectiveThinkingOptionId: effort } }; },
+    async cancelAgent(id) { calls.push(`cancel:${id}`); },
+  };
+  const runtime = new PaseoRuntime(client, {}, { workspace: 'fake' }, true, 0, Promise.resolve(true), () => {});
+  // A successful input-time check must not stand in for the later cancellation check.
+  await runtime.confirmSelection('agent', { model: 'gpt-5.6-luna', effort: 'low' });
+  calls.length = 0; supported = false;
+  const record = value => { records.push(value); calls.push('record'); };
+  await assert.rejects(cancelLiveTurn(runtime, 'agent', record), /MODEL_UNSUPPORTED/);
+  assert.deepEqual(calls, ['catalog']); assert.deepEqual(records, []);
+  calls.length = 0; supported = true; effort = 'high';
+  await assert.rejects(cancelLiveTurn(runtime, 'agent', record), /MODEL_UNCONFIRMED/);
+  assert.deepEqual(calls, ['catalog', 'inspect']); assert.deepEqual(records, []);
+  calls.length = 0; effort = 'low';
+  await cancelLiveTurn(runtime, 'agent', record);
+  assert.deepEqual(calls, ['catalog', 'inspect', 'record', 'cancel:agent']);
+  assert.deepEqual(records, [{ action: 'cancel', model: 'gpt-5.6-luna', effort: 'low', result: 'guarded action' }]);
 });
 
 test('actual packaged server starts privately, rejects duplicate ownership and stops', { timeout: 90_000 }, async () => {

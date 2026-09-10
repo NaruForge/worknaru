@@ -19,6 +19,8 @@
     "test": "npm run build && node --test tests/*.test.mjs",
     "test:live": "npm run build && node --test tests/chat-product-live.mjs",
     "test:web": "npm run build && playwright test",
+    "test:web:behavior": "npm run build && playwright test --grep-invert @visual",
+    "test:web:visual": "npm run build && playwright test --grep @visual",
     "build:daemon": "node scripts/build-daemon.mjs",
     "rpc": "node dist/rpc.js",
     "test:runtime": "npm run build:daemon && node --test tests/paseo-runtime.test.mjs",
